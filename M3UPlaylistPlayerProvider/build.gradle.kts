@@ -16,7 +16,7 @@ cloudstream {
     // All of these properties are optional, you can safely remove them
     language = "en"
     description = "Add your own m3u playlists"
-    authors = listOf("NivinCNC")
+    authors = listOf("toonTamilIndia")
 
     /**
      * Status int as the following:

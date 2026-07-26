@@ -12,7 +12,7 @@ cloudstream {
 
     description = "Tamil Tv Serial/Shows Provider"
     language = "ta"
-    authors = listOf("NivinCNC")
+    authors = listOf("toonTamilIndia")
 
     /**
     * Status int as the following:
@@ -29,5 +29,5 @@ cloudstream {
     tvTypes = listOf(
         "TvSeries",
     )
-    iconUrl = "https://github.com/NivinCNC/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/TamilDhoolProvider/icon.png"
+    iconUrl = "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/TamilDhoolProvider/icon.png"
 }

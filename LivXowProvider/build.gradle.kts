@@ -16,7 +16,7 @@ dependencies {
 cloudstream {
     language = "ta"
     description = "Watch Live Sports and TV Channels via LivXow"
-    authors = listOf("NivinCNC")
+    authors = listOf("toonTamilIndia")
 
     /**
      * Status int as the following:

@@ -12,7 +12,7 @@ cloudstream {
 
     description = "Desi Serials Tv Shows Provider"
     language = "hi"
-    authors = listOf("NivinCNC")
+    authors = listOf("toonTamilIndia")
 
     /**
     * Status int as the following:

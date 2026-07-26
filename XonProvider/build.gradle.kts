@@ -11,7 +11,7 @@ cloudstream {
     // All of these properties are optional, you can safely remove them
 
     description = "Xon Provider for Anime and Cartoons - Tamil, Hindi, Telugu, English, Japanese"
-    authors = listOf("NivinCNC")
+    authors = listOf("toonTamilIndia")
 
     /**
      * Status int as the following:

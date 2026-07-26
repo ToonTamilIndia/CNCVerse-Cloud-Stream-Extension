@@ -11,7 +11,7 @@ cloudstream {
     // All of these properties are optional, you can safely remove them
 
     description = "The largest movie link store in Bangladesh"
-    authors = listOf("NivinCNC")
+    authors = listOf("toonTamilIndia")
 
     /**
     * Status int as the following:

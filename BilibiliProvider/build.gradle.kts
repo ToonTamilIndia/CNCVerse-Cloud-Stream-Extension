@@ -11,7 +11,7 @@ cloudstream {
     language = "ta"
     // All of these properties are optional, you can safely remove them
     description = "Bilibili TV - International streaming platform for anime, movies, and variety shows (bilibili.tv)"
-    authors = listOf("NivinCNC")
+    authors = listOf("toonTamilIndia")
     /**
      * Status int as the following:
      * 0: Down

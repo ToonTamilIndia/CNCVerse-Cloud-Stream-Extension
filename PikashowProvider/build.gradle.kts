@@ -16,7 +16,7 @@ cloudstream {
     // All of these properties are optional, you can safely remove them
     language = "ta"
     description = "Stream movies and series from Pikashow"
-    authors = listOf("NivinCNC")
+    authors = listOf("toonTamilIndia")
 
     /**
      * Status int as the following:
@@ -32,6 +32,6 @@ cloudstream {
     )
     requiresResources = false
 
-    iconUrl = "https://raw.githubusercontent.com/NivinCNC/CNCVerse-Cloud-Stream-Extension/refs/heads/master/PikashowProvider/logo.png"
+    iconUrl = "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/refs/heads/master/PikashowProvider/logo.png"
 
 }

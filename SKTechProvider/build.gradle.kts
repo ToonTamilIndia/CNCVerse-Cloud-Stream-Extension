@@ -16,7 +16,7 @@ cloudstream {
     // All of these properties are optional, you can safely remove them
     language = "ta"
     description = "Watch Live sports and TV channels via SK Tech"
-    authors = listOf("NivinCNC")
+    authors = listOf("toonTamilIndia")
 
     /**
      * Status int as the following:

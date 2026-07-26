@@ -74,27 +74,110 @@ object SKLiveCryptoUtils {
     private fun decryptLegacy(encryptedData: String): String? {
         return try {
             val standardB64 = customToStandardBase64(encryptedData)
-            val decoded = Base64.decode(standardB64, Base64.DEFAULT)
-            val decodedStr = String(decoded, Charsets.UTF_8)
-            val reversedStr = decodedStr.reversed()
-            val ciphertext = Base64.decode(reversedStr, Base64.DEFAULT)
-            if (ciphertext.size % 16 == 0) {
-                val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
-                val secretKeySpec = SecretKeySpec(LEGACY_AES_KEY, "AES")
-                val ivParameterSpec = IvParameterSpec(LEGACY_AES_IV)
-                cipher.init(Cipher.DECRYPT_MODE, secretKeySpec, ivParameterSpec)
-
-                val decrypted = cipher.doFinal(ciphertext)
-                String(decrypted, Charsets.UTF_8)
-            } else {
-                println("    ERROR: Not block-aligned for AES!")
-                decodedStr
-            }
+            val ciphertext = Base64.decode(standardB64, Base64.DEFAULT)
+            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+            val secretKeySpec = SecretKeySpec(LEGACY_AES_KEY, "AES")
+            val ivParameterSpec = IvParameterSpec(LEGACY_AES_IV)
+            cipher.init(Cipher.DECRYPT_MODE, secretKeySpec, ivParameterSpec)
+            val decrypted = cipher.doFinal(ciphertext)
+            String(decrypted, Charsets.UTF_8)
         } catch (e: Exception) {
             println("[ERROR] Legacy decryption failed: ${e.message}")
-            e.printStackTrace()
             null
         }
+    }
+
+    private fun padBase64(s: String): String =
+        if (s.length % 4 != 0) s + "=".repeat(4 - s.length % 4) else s
+
+    private fun prepareCiphertext(encryptedData: String): ByteArray? {
+        val src = if (encryptedData.startsWith("==")) encryptedData.reversed() else encryptedData
+        return try {
+            val decoded = Base64.decode(padBase64(src), Base64.DEFAULT)
+            when {
+                decoded.size > 12 && decoded.size % 16 == 12 -> decoded.copyOfRange(12, decoded.size)
+                decoded.size % 16 == 0 -> decoded
+                else -> null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun aesDecryptAndTransform(ciphertext: ByteArray, key: ByteArray, iv: ByteArray): ByteArray? {
+        return try {
+            if (ciphertext.size % 16 != 0) return null
+            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(iv))
+            val plain = cipher.doFinal(ciphertext).toMutableList()
+            for (i in 0 until plain.size - 1 step 2) {
+                val tmp = plain[i]
+                plain[i] = plain[i + 1]
+                plain[i + 1] = tmp
+            }
+            plain.reverse()
+            plain.toByteArray()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun decryptV25Pass1(encryptedData: String): String? {
+        val ciphertext = prepareCiphertext(encryptedData) ?: return null
+        val plain = aesDecryptAndTransform(ciphertext, V23_KEY, V25_KEY1.toByteArray(Charsets.UTF_8)) ?: return null
+        return try {
+            val s = String(Base64.decode(plain, Base64.DEFAULT), Charsets.UTF_8).trimStart()
+            if (s.startsWith("[") || s.startsWith("{")) s else null
+        } catch (_: Exception) { null }
+    }
+
+    private fun decryptV25Pass2(encryptedData: String): String? {
+        val ciphertext = prepareCiphertext(encryptedData) ?: return null
+        val plain = aesDecryptAndTransform(ciphertext, V23_KEY, V25_KEY2.toByteArray(Charsets.UTF_8)) ?: return null
+        return try {
+            val s = String(Base64.decode(plain, Base64.DEFAULT), Charsets.UTF_8).trimStart()
+            if (s.startsWith("[") || s.startsWith("{")) s else null
+        } catch (_: Exception) { null }
+    }
+
+    private fun preprocessResponse(rawResponse: String): String? {
+        return try {
+            val chars = rawResponse.toCharArray()
+            for (i in 0 until chars.size - 1 step 2) {
+                val tmp = chars[i]
+                chars[i] = chars[i + 1]
+                chars[i + 1] = tmp
+            }
+            val reversed = String(chars).reversed()
+            val decoded = Base64.decode(reversed, Base64.DEFAULT)
+            val str = String(decoded, Charsets.UTF_8)
+            if (!str.endsWith("BA@GBA@GBA@GBA@G")) return null
+            str.substring(0, str.length - "BA@GBA@GBA@GBA@G".length)
+        } catch (_: Exception) { null }
+    }
+
+    private fun decryptFallbackB(encryptedData: String): String? {
+        return try {
+            val standardB64 = customToStandardBase64(encryptedData)
+            val decodedBytes = Base64.decode(padBase64(standardB64), Base64.DEFAULT)
+            val step1 = String(decodedBytes, Charsets.UTF_8)
+            val step2 = step1.reversed()
+            val step3Raw = Base64.decode(padBase64(step2), Base64.DEFAULT)
+            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(FALLBACK_AES_KEY.toByteArray(Charsets.UTF_8), "AES"), IvParameterSpec(FALLBACK_AES_IV.toByteArray(Charsets.UTF_8)))
+            val result = String(cipher.doFinal(step3Raw), Charsets.UTF_8).trimStart()
+            if (result.startsWith("[") || result.startsWith("{")) result else null
+        } catch (_: Exception) { null }
+    }
+
+    private fun decryptFallbackC(encryptedData: String): String? {
+        return try {
+            val raw = Base64.decode(padBase64(encryptedData), Base64.DEFAULT)
+            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(FALLBACK_AES_KEY.toByteArray(Charsets.UTF_8), "AES"), IvParameterSpec(FALLBACK_AES_IV.toByteArray(Charsets.UTF_8)))
+            val result = String(cipher.doFinal(raw), Charsets.UTF_8).trimStart()
+            if (result.startsWith("[") || result.startsWith("{")) result else null
+        } catch (_: Exception) { null }
     }
 
     private fun customToStandardBase64(customB64: String): String {
@@ -110,9 +193,18 @@ object SKLiveCryptoUtils {
         return result.toString()
     }
 
-    // ── Public API (unchanged signature) ──────────────────────────────
     fun decryptSKLive(encryptedData: String): String? {
+        val preprocessed = preprocessResponse(encryptedData)
+        val v25Input = preprocessed ?: encryptedData
+        decryptV25Pass1(v25Input)?.let { return it }
+        decryptV25Pass2(v25Input)?.let { return it }
         decryptV23(encryptedData)?.let { return it }
-        return decryptLegacy(encryptedData)
+        decryptLegacy(v25Input)?.let { return it }
+        val legacyInput = try { String(Base64.decode(encryptedData, Base64.DEFAULT), Charsets.UTF_8) } catch (_: Exception) { encryptedData }
+        decryptLegacy(legacyInput)?.let { return it }
+        if (legacyInput != encryptedData) decryptLegacy(encryptedData)?.let { return it }
+        decryptFallbackB(encryptedData)?.let { return it }
+        decryptFallbackC(encryptedData)?.let { return it }
+        return null
     }
 }

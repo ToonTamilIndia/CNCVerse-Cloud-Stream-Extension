@@ -41,14 +41,14 @@ import android.net.Uri
  * IPTV provider). Event slugs resolve to stream lists via
  * `PlayZTVProviderManager.fetchChannelStreams(slug)`.
  */
-class PlayZTVLiveEventsProvider : MainAPI() {
+class PlayZTVLiveEventsProvider(private val customName: String = "⚡PlayZTV Live Events", val customCatLink: String? = null) : MainAPI() {
 
     companion object {
         var context: android.content.Context? = null
     }
 
     override var mainUrl = "https://adsflw.xyz"
-    override var name = "⚡PlayZTV Live Events"
+    override var name = customName
     override var lang = "hi"
     override val hasMainPage = true
     override val hasChromecastSupport = true
@@ -156,8 +156,11 @@ class PlayZTVLiveEventsProvider : MainAPI() {
     // ── CloudStream interface ─────────────────────────────────────────────────
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-
-        val events = PlayZTVProviderManager.fetchLiveEvents()
+        val events = if (customCatLink != null) {
+            PlayZTVProviderManager.fetchCustomEvents(customCatLink)
+        } else {
+            PlayZTVProviderManager.fetchLiveEvents()
+        }
         val grouped = events.groupBy { it.eventInfo?.eventCat ?: it.cat ?: "Other" }
 
         val pages = grouped

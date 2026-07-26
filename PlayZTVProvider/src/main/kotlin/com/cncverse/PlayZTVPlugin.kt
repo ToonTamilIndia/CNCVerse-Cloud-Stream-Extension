@@ -46,7 +46,13 @@ class PlayZTVPlugin : Plugin() {
             .forEach { p ->
                 val title = p["title"] as String
                 val catLink = p["catLink"] as String
-                registerMainAPI(PlayZTV(title, catLink))
+                val type = p["type"] as? String ?: "m3u"
+                val displayTitle = "📺 $title"
+                if (type == "custom") {
+                    registerMainAPI(PlayZTVLiveEventsProvider(displayTitle, catLink))
+                } else {
+                    registerMainAPI(PlayZTV(displayTitle, catLink))
+                }
             }
 
         // Hook up the settings screen

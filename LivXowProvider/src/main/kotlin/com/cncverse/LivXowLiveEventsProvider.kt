@@ -27,46 +27,16 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import com.lagradost.cloudstream3.APIHolder.unixTime
-import com.lagradost.cloudstream3.ui.settings.Globals.TV
-import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
-import android.content.Intent
-import android.net.Uri
 
-class LivXowLiveEventsProvider : MainAPI() {
+class LivXowLiveEventsProvider(private val customName: String = "⚡LivXow Live Events", val customCatLink: String? = null) : MainAPI() {
     companion object {
         var context: android.content.Context? = null
         private var cachedWebUrl: String? = null
         private const val DEFAULT_WEB_URL = "https://welalagaa.site"
-        private var lastBrowserOpenMs: Long = 0L
-        private const val BROWSER_DEBOUNCE_MS: Long = 10000L
-
-        private var csGuardWasEverActive = false
-        private var subscriptionPopupShown = false
-        private var telegramPopupShown = false
-
-        fun isCsGuardActive(): Boolean {
-            return try {
-                val cls = Class.forName("android.app.ActivityThread")
-                val thread = cls.getMethod("currentActivityThread").invoke(null)
-                val field = cls.getDeclaredField("mInstrumentation")
-                field.isAccessible = true
-                val obj = field.get(thread) ?: return false
-                val name = obj::class.java.name.lowercase(Locale.ROOT)
-                name.contains("guard") || name.contains("csguard")
-            } catch (e: Exception) {
-                false
-            }
-        }
-
-        fun isCsGuardBlocked(): Boolean {
-            if (isCsGuardActive()) csGuardWasEverActive = true
-            return csGuardWasEverActive
-        }
     }
 
     override var mainUrl = DEFAULT_WEB_URL
-    override var name = "⚡LivXow Live Events"
+    override var name = customName
     override var lang = "ta"
     override val hasMainPage = true
     override val hasChromecastSupport = true
@@ -275,15 +245,11 @@ class LivXowLiveEventsProvider : MainAPI() {
 
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        if (isCsGuardBlocked()) {
-            return newHomePageResponse(emptyList(), hasNext = false)
+        val events = if (customCatLink != null) {
+            LivXowProviderManager.fetchCustomEvents(customCatLink)
+        } else {
+            LivXowProviderManager.fetchLiveEvents()
         }
-
-        // Show star popup on first visit
-
-
-        // Fetch live events using LivXowProviderManager (same as providers)
-        val events = LivXowProviderManager.fetchLiveEvents()
 
         // Group events by eventCat
         val groupedEvents = events.groupBy { it.eventInfo?.eventCat ?: it.cat ?: "Other" }

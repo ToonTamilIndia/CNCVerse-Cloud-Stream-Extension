@@ -28,17 +28,12 @@ class CineTvProvider : MainAPI() {
     companion object {
         var context: Context? = null
         
-        // DES3 constants from BuildConfig
-        private val SECRET_KEY_ENCRYPTED = BuildConfig.CINETV_SECRET_KEY_ENCRYPTED
-        private val DES_KEY = BuildConfig.CINETV_DES_KEY
-        private val DES_IV = BuildConfig.CINETV_DES_IV
-        
-        // AES constants from BuildConfig
-        private val AES_KEY = BuildConfig.CINETV_AES_KEY
-        private val AES_IV = BuildConfig.CINETV_AES_IV
-        
-        // URL signing secret from BuildConfig
-        private val WS_SECRET = BuildConfig.CINETV_WS_SECRET
+        private val SECRET_KEY_ENCRYPTED = "MxASAkl/yHTGg+/Tw1R7u96nGqkWsOZ2"
+        private val DES_KEY = "dsawdf634eebGFHITR5UT9kS0"
+        private val DES_IV = "32456738"
+        private val AES_KEY = "0123456789123456"
+        private val AES_IV = "2015030120123456"
+        private val WS_SECRET = "00b5f05c40b4f1d91dbc9b3fd8a059ef"
     }
     
     override var mainUrl = "https://filmin.ajfysu.com"

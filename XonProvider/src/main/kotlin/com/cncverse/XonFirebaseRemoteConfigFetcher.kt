@@ -19,27 +19,9 @@ object XonFirebaseRemoteConfigFetcher {
     private const val PACKAGE_NAME = "Com.XON.Anime.Cartoon.XonTV.app"
     private const val ANDROID_CERT = "85A99DC9E15F7BDE6212D089742331EE32E80FE6"
     
-    // Get credentials from BuildConfig (injected from local.properties)
-    private val API_KEY: String
-        get() = try {
-            com.cncverse.BuildConfig.XON_FIREBASE_API_KEY
-        } catch (e: Exception) {
-            ""
-        }
-    
-    private val APP_ID: String
-        get() = try {
-            com.cncverse.BuildConfig.XON_FIREBASE_APP_ID
-        } catch (e: Exception) {
-            ""
-        }
-    
-    private val PROJECT_NUMBER: String
-        get() = try {
-            com.cncverse.BuildConfig.XON_FIREBASE_PROJECT_NUMBER
-        } catch (e: Exception) {
-            ""
-        }
+    private val API_KEY = "AIzaSyB9fHu331VR7W8tjMH_XAYfMtLaxUAAJRI"
+    private val APP_ID = "1:511312430460:android:62346c9665e328ecdd50f9"
+    private val PROJECT_NUMBER = "511312430460"
     
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)

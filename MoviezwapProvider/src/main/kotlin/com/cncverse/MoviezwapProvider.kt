@@ -18,7 +18,7 @@ import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
 
 class MoviezwapProvider : MainAPI() {
     // Using CORS proxy to bypass geo-blocks
-    override var mainUrl = "https://www.moviezwap.surf"
+    override var mainUrl = "https://www.moviezwap.land"
     override var name = "Moviezwap"
     override val hasMainPage = true
     override var lang = "te" // Telugu
@@ -73,9 +73,7 @@ class MoviezwapProvider : MainAPI() {
         val href = this.attr("href")
         if (!href.contains("/movie/")) return null
         
-        // Extract title from link text or href
         val title = this.text().trim().ifEmpty {
-            // Extract from URL if link text is empty
             href.substringAfterLast("/")
                 .removeSuffix(".html")
                 .replace("-", " ")
@@ -84,14 +82,39 @@ class MoviezwapProvider : MainAPI() {
         
         if (title.isBlank()) return null
         
-        // Determine if it's a series based on keywords
         val isSeries = title.contains(Regex("(?i)(season|episodes?|eps|all episodes|web series)"))
         
-        // Poster images are only available on detail pages, not in listings
-        return if (isSeries) {
-            newTvSeriesSearchResponse(title, fixUrl(href), TvType.TvSeries)
+        val slug = href.substringAfter("/movie/").substringBefore(".html").lowercase()
+            .replace("(", "").replace(")", "")
+        
+        val cleanSlug = if (isSeries) {
+            val seasonIndex = slug.lastIndexOf("-season-")
+            if (seasonIndex != -1) {
+                var end = seasonIndex + 8
+                while (end < slug.length && slug[end].isDigit()) end++
+                slug.substring(0, end)
+            } else slug
         } else {
-            newMovieSearchResponse(title, fixUrl(href), TvType.Movie)
+            val movieIndex = slug.lastIndexOf("-movie")
+            if (movieIndex != -1) {
+                slug.substring(0, movieIndex + 6)
+            } else if (slug.endsWith("-org")) {
+                slug.removeSuffix("-org") + "-movie"
+            } else if (slug.endsWith("-orginal")) {
+                slug.removeSuffix("-orginal") + "-movie"
+            } else slug
+        }
+        
+        val posterUrl = "/poster/$cleanSlug.jpg"
+        
+        return if (isSeries) {
+            newTvSeriesSearchResponse(title, fixUrl(href), TvType.TvSeries) {
+                this.posterUrl = fixUrlNull(posterUrl)
+            }
+        } else {
+            newMovieSearchResponse(title, fixUrl(href), TvType.Movie) {
+                this.posterUrl = fixUrlNull(posterUrl)
+            }
         }
     }
 

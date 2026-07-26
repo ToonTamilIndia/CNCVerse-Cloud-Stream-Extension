@@ -39,8 +39,8 @@ class PikashowProvider : MainAPI() {
         var context: Context? = null
     }
 
-    private val apiKey = BuildConfig.PIKASHOW_API_KEY
-    private val hmacSecret = BuildConfig.PIKASHOW_HMAC_SECRET
+    private val apiKey = "picashow-api-secret-key"
+    private val hmacSecret = "picashow-api-secret-2025"
     private val mapper = jacksonObjectMapper()
     
     // Generate realistic device identifiers

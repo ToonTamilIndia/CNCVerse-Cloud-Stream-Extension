@@ -39,7 +39,13 @@ class SKTechPlugin: Plugin() {
         selectedProviders.forEach { provider ->
             val title = provider["title"] as String
             val catLink = provider["catLink"] as String
-            registerMainAPI(SKTech(title, catLink))
+            val type = provider["type"] as? String ?: "m3u"
+            val displayTitle = "📺 $title"
+            if (type == "custom") {
+                registerMainAPI(LiveEventsProvider(displayTitle, catLink))
+            } else {
+                registerMainAPI(SKTech(displayTitle, catLink))
+            }
         }
 
         val activity = context as AppCompatActivity

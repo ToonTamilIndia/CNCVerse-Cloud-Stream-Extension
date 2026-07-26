@@ -1,9 +1,7 @@
 import com.android.build.gradle.BaseExtension
 import com.lagradost.cloudstream3.gradle.CloudstreamExtension
-import org.gradle.kotlin.dsl.register
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile
-import java.util.Properties
 
 buildscript {
     repositories {
@@ -27,22 +25,6 @@ allprojects {
     }
 }
 
-// Load secrets from local.properties if available
-val localProperties = Properties().apply {
-    val localFile = rootProject.file("local.properties")
-    if (localFile.exists()) {
-        localFile.inputStream().use { load(it) }
-    }
-}
-
-// Helper to read secret from local.properties or system environment or fallback
-fun getSecret(key: String, fallback: String = ""): String {
-    return localProperties.getProperty(key)
-        ?: System.getenv(key)
-        ?: fallback
-}
-
-
 fun Project.cloudstream(configuration: CloudstreamExtension.() -> Unit) = extensions.getByName<CloudstreamExtension>("cloudstream").configuration()
 
 fun Project.android(configuration: BaseExtension.() -> Unit) = extensions.getByName<BaseExtension>("android").configuration()
@@ -65,38 +47,30 @@ subprojects {
             compileSdkVersion(35)
             targetSdk = 35
 
-            // Inject secrets into BuildConfig
-            buildConfigField("String", "MOVIEBOX_SECRET_KEY_DEFAULT", "\"${getSecret("MOVIEBOX_SECRET_KEY_DEFAULT")}\"")
-            buildConfigField("String", "MOVIEBOX_SECRET_KEY_ALT", "\"${getSecret("MOVIEBOX_SECRET_KEY_ALT")}\"")
-            buildConfigField("String", "CASTLE_SUFFIX", "\"${getSecret("CASTLE_SUFFIX")}\"")
-            buildConfigField("String", "SIMKL_API", "\"${getSecret("SIMKL_API")}\"")
-            buildConfigField("String", "MAL_API", "\"${getSecret("MAL_API")}\"")
+            // CineTvProvider keys (from original NivinCNC source)
+            buildConfigField("String", "CINETV_SECRET_KEY_ENCRYPTED", "\"MxASAkl/yHTGg+/Tw1R7u96nGqkWsOZ2\"")
+            buildConfigField("String", "CINETV_DES_KEY", "\"dsawdf634eebGFHITR5UT9kS0\"")
+            buildConfigField("String", "CINETV_DES_IV", "\"32456738\"")
+            buildConfigField("String", "CINETV_AES_KEY", "\"0123456789123456\"")
+            buildConfigField("String", "CINETV_AES_IV", "\"2015030120123456\"")
+            buildConfigField("String", "CINETV_WS_SECRET", "\"00b5f05c40b4f1d91dbc9b3fd8a059ef\"")
+
+            // CastleTv provider key suffix
+            buildConfigField("String", "CASTLE_SUFFIX", "\"\"")
+
+            // Pikashow provider keys (original values)
+            buildConfigField("String", "PIKASHOW_API_KEY", "\"\"")
+            buildConfigField("String", "PIKASHOW_HMAC_SECRET", "\"\"")
+
+            // XonProvider Firebase config (empty = uses hardcoded fallback)
+            buildConfigField("String", "XON_FIREBASE_API_KEY", "\"\"")
+            buildConfigField("String", "XON_FIREBASE_APP_ID", "\"\"")
+            buildConfigField("String", "XON_FIREBASE_PROJECT_NUMBER", "\"\"")
+
+            // Library identifiers
             buildConfigField("String", "LIBRARY_PACKAGE_NAME", "\"com.cncverse\"")
-            buildConfigField("String", "CRICIFY_PROVIDER_SECRET1", "\"${getSecret("CRICIFY_PROVIDER_SECRET1")}\"")
-            buildConfigField("String", "CRICIFY_PROVIDER_SECRET2", "\"${getSecret("CRICIFY_PROVIDER_SECRET2")}\"")
-            buildConfigField("String", "PIKASHOW_API_KEY", "\"${getSecret("PIKASHOW_API_KEY")}\"")
-            buildConfigField("String", "PIKASHOW_HMAC_SECRET", "\"${getSecret("PIKASHOW_HMAC_SECRET")}\"")
-            buildConfigField("String", "CRICFY_FIREBASE_API_KEY", "\"${getSecret("CRICFY_FIREBASE_API_KEY")}\"")
-            buildConfigField("String", "CRICFY_FIREBASE_APP_ID", "\"${getSecret("CRICFY_FIREBASE_APP_ID")}\"")
-            buildConfigField("String", "CRICFY_FIREBASE_PROJECT_NUMBER", "\"${getSecret("CRICFY_FIREBASE_PROJECT_NUMBER")}\"")
-            buildConfigField("String", "SKLIVE_KEY", "\"${getSecret("SKLIVE_KEY")}\"")
-            buildConfigField("String", "SKLIVE_IV", "\"${getSecret("SKLIVE_IV")}\"")
-            buildConfigField("String", "SKLIVE_V23_KEY", "\"${getSecret("SKLIVE_V23_KEY")}\"")
-            buildConfigField("String", "SKLIVE_V23_IV", "\"${getSecret("SKLIVE_V23_IV")}\"")
-            buildConfigField("String", "SKTECH_FIREBASE_API_KEY", "\"${getSecret("SKTECH_FIREBASE_API_KEY")}\"")
-            buildConfigField("String", "SKTECH_FIREBASE_APP_ID", "\"${getSecret("SKTECH_FIREBASE_APP_ID")}\"")
-            buildConfigField("String", "SKTECH_FIREBASE_PROJECT_NUMBER", "\"${getSecret("SKTECH_FIREBASE_PROJECT_NUMBER")}\"")
-            buildConfigField("String", "XON_FIREBASE_API_KEY", "\"${getSecret("XON_FIREBASE_API_KEY")}\"")
-            buildConfigField("String", "XON_FIREBASE_APP_ID", "\"${getSecret("XON_FIREBASE_APP_ID")}\"")
-            buildConfigField("String", "XON_FIREBASE_PROJECT_NUMBER", "\"${getSecret("XON_FIREBASE_PROJECT_NUMBER")}\"")
-            buildConfigField("String", "CINETV_SECRET_KEY_ENCRYPTED", "\"${getSecret("CINETV_SECRET_KEY_ENCRYPTED")}\"")
-            buildConfigField("String", "CINETV_DES_KEY", "\"${getSecret("CINETV_DES_KEY")}\"")
-            buildConfigField("String", "CINETV_DES_IV", "\"${getSecret("CINETV_DES_IV")}\"")
-            buildConfigField("String", "CINETV_AES_KEY", "\"${getSecret("CINETV_AES_KEY")}\"")
-            buildConfigField("String", "CINETV_AES_IV", "\"${getSecret("CINETV_AES_IV")}\"")
-            buildConfigField("String", "CINETV_WS_SECRET", "\"${getSecret("CINETV_WS_SECRET")}\"")
-            buildConfigField("String", "SMARTLINK_URL", "\"${getSecret("SMARTLINK_URL")}\"")
-            buildConfigField("String", "SPEEDLINK_URL", "\"${getSecret("SPEEDLINK_URL")}\"")
+            buildConfigField("String", "SMARTLINK_URL", "\"\"")
+            buildConfigField("String", "SPEEDLINK_URL", "\"\"")
         }
 
         compileOptions {

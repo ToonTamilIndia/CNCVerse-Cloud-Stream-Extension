@@ -33,7 +33,7 @@ import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
 import android.content.Intent
 import android.net.Uri
 
-class LiveEventsProvider : MainAPI() {
+class LiveEventsProvider(private val customName: String = "⚡SKTech Live Events", val customCatLink: String? = null) : MainAPI() {
     companion object {
         var context: android.content.Context? = null
         private var cachedWebUrl: String? = null
@@ -41,7 +41,7 @@ class LiveEventsProvider : MainAPI() {
     }
 
     override var mainUrl = DEFAULT_WEB_URL
-    override var name = "⚡SKTech Live Events"
+    override var name = customName
     override var lang = "ta"
     override val hasMainPage = true
     override val hasChromecastSupport = true
@@ -242,11 +242,11 @@ class LiveEventsProvider : MainAPI() {
 
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        // Show star popup on first visit
-
-
-        // Fetch live events using ProviderManager (same as providers)
-        val events = ProviderManager.fetchLiveEvents()
+        val events = if (customCatLink != null) {
+            ProviderManager.fetchCustomEvents(customCatLink)
+        } else {
+            ProviderManager.fetchLiveEvents()
+        }
 
         // Group events by eventCat
         val groupedEvents = events.groupBy { it.eventInfo?.eventCat ?: it.cat ?: "Other" }

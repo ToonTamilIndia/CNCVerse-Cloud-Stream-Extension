@@ -1,9 +1,7 @@
 package com.anikoto
 
 import com.fasterxml.jackson.annotation.JsonProperty
-import com.lagradost.api.Log
 import com.lagradost.cloudstream3.SubtitleFile
-import com.lagradost.cloudstream3.USER_AGENT
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.newSubtitleFile
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
@@ -12,6 +10,8 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.newExtractorLink
+
+private const val MP_UA = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
 
 class Vidwish : MegaPlay() {
     override val name = "Vidwish"
@@ -47,15 +47,15 @@ open class MegaPlay : ExtractorApi() {
             callback: (ExtractorLink) -> Unit
         ) {
             val playbackHeaders = mapOf(
-                "User-Agent" to USER_AGENT,
+                "User-Agent" to MP_UA,
                 "Accept" to "*/*",
                 "Origin" to host,
                 "Referer" to "$host/",
             )
 
             val pageHeaders = mapOf(
-                "User-Agent" to USER_AGENT,
-                "Referer" to (referer ?: "https://anikoto.cz/")
+                "User-Agent" to MP_UA,
+                "Referer" to (referer ?: host)
             )
 
             val doc = app.get(url, headers = pageHeaders).document
@@ -77,21 +77,17 @@ open class MegaPlay : ExtractorApi() {
                     headers = ajaxHeaders,
                     referer = url
                 ).text
-            } catch (e: Exception) {
-                Log.e("MegaPlay", "getSources failed: ${e.message}")
+            } catch (_: Exception) {
                 return
             }
 
             val root = try {
                 parseJson<MegaPlayResponse>(jsonText)
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 null
             } ?: return
             val m3u8 = root.sources?.file
-            if (m3u8.isNullOrBlank()) {
-                Log.e("MegaPlay", "No m3u8 in response for id=$streamId")
-                return
-            }
+            if (m3u8.isNullOrBlank()) return
 
             val generated = M3u8Helper.generateM3u8(serverName, m3u8, host, headers = playbackHeaders)
             if (generated.isNotEmpty()) {

@@ -10,6 +10,8 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
 
+private const val ANIKOTO_UA = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
+
 class AnikotoProvider : MainAPI() {
     companion object {
         var context: android.content.Context? = null
@@ -33,13 +35,13 @@ class AnikotoProvider : MainAPI() {
     )
 
     private val browserHeaders = mapOf(
-        "User-Agent" to USER_AGENT,
+        "User-Agent" to ANIKOTO_UA,
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language" to "en-US,en;q=0.5"
     )
 
     private fun ajaxHeaders(referer: String) = mapOf(
-        "User-Agent" to USER_AGENT,
+        "User-Agent" to ANIKOTO_UA,
         "X-Requested-With" to "XMLHttpRequest",
         "Accept" to "application/json, text/javascript, */*; q=0.01",
         "Referer" to referer
@@ -58,8 +60,7 @@ class AnikotoProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val animeUrl = url.replace(Regex("/ep-\\d+$"), "")
-        val doc = app.get(animeUrl, headers = browserHeaders).document
+        val doc = app.get(url, headers = browserHeaders).document
 
         val title = doc.selectFirst("#w-info h1.title, h1[itemprop=name], .title[itemprop=name]")
             ?.text()?.trim()
@@ -91,8 +92,8 @@ class AnikotoProvider : MainAPI() {
             try {
                 val jsonText = app.get(
                     "$mainUrl/ajax/episode/list/$animeId",
-                    headers = ajaxHeaders(animeUrl),
-                    referer = animeUrl
+                    headers = ajaxHeaders(url),
+                    referer = url
                 ).text
                 val html = jsonResultString(jsonText)
                 val epSoup = Jsoup.parse(html)
@@ -110,7 +111,7 @@ class AnikotoProvider : MainAPI() {
 
                     if (hasSub || !hasDub) {
                         subEpisodes.add(
-                            newEpisode("anikoto|$animeUrl|$dataIds|sub") {
+                            newEpisode("anikoto|$url|$dataIds|sub") {
                                 episode = epNum
                                 name = epName
                             }
@@ -118,7 +119,7 @@ class AnikotoProvider : MainAPI() {
                     }
                     if (hasDub) {
                         dubEpisodes.add(
-                            newEpisode("anikoto|$animeUrl|$dataIds|dub") {
+                            newEpisode("anikoto|$url|$dataIds|dub") {
                                 episode = epNum
                                 name = epName
                             }
@@ -129,7 +130,7 @@ class AnikotoProvider : MainAPI() {
             }
         }
 
-        if (subEpisodes.isEmpty() && dubEpisodes.isEmpty()) {
+        if (subEpisodes.isNotEmpty() && dubEpisodes.isEmpty()) {
             doc.select("a[href*='/ep-']").forEachIndexed { i, el ->
                 val epName = el.text().trim().takeIf { it.isNotBlank() }
                     ?: "Episode ${i + 1}"
@@ -142,7 +143,7 @@ class AnikotoProvider : MainAPI() {
             }
         }
 
-        return newAnimeLoadResponse(title, animeUrl, if (isMovie) TvType.AnimeMovie else TvType.Anime) {
+        return newAnimeLoadResponse(title, url, if (isMovie) TvType.AnimeMovie else TvType.Anime) {
             this.posterUrl = poster?.let { fixUrl(it) }
             this.plot = plot
             this.tags = genres
@@ -373,12 +374,12 @@ class AnikotoProvider : MainAPI() {
         val type = if (url.contains("/dub", ignoreCase = true)) "dub" else "sub"
 
         val pageHeaders = mapOf(
-            "User-Agent" to USER_AGENT,
+            "User-Agent" to ANIKOTO_UA,
             "Referer" to referer
         )
 
         val playbackHeaders = mapOf(
-            "User-Agent" to USER_AGENT,
+            "User-Agent" to ANIKOTO_UA,
             "Accept" to "*/*",
             "Origin" to host,
             "Referer" to "$host/"

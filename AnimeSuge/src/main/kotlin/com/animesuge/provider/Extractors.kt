@@ -2,7 +2,6 @@ package com.animesuge.provider
 
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.SubtitleFile
-import com.lagradost.cloudstream3.USER_AGENT
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.newSubtitleFile
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
@@ -27,6 +26,8 @@ open class MegaPlay : ExtractorApi() {
     }
 
     companion object {
+        private const val UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"
+
         suspend fun extractMegaPlayUrl(
             url: String,
             referer: String?,
@@ -36,8 +37,8 @@ open class MegaPlay : ExtractorApi() {
             callback: (ExtractorLink) -> Unit,
         ) {
             val pageHeaders = mapOf(
-                "User-Agent" to USER_AGENT,
-                "Referer" to (referer ?: "https://animesuge.cz/"),
+                "User-Agent" to UA,
+                "Referer" to (referer ?: "https://anikoto.cz/"),
             )
 
             val doc = app.get(url, headers = pageHeaders).document
@@ -50,6 +51,10 @@ open class MegaPlay : ExtractorApi() {
             val type = if (url.contains("/dub", ignoreCase = true)) "dub" else "sub"
 
             val ajaxHeaders = mapOf(
+                "User-Agent" to UA,
+                "Accept" to "*/*",
+                "X-Requested-With" to "XMLHttpRequest",
+                "Origin" to host,
                 "Referer" to url,
             )
 
@@ -73,7 +78,7 @@ open class MegaPlay : ExtractorApi() {
             if (m3u8.isNullOrBlank()) return
 
             val playbackHeaders = mapOf(
-                "User-Agent" to USER_AGENT,
+                "User-Agent" to UA,
                 "Accept" to "*/*",
                 "Origin" to host,
                 "Referer" to "$host/",

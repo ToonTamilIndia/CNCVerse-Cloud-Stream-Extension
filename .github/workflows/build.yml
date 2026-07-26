@@ -43,3 +43,34 @@ jobs:
           name: cs3-builds
           path: "**/build/*.cs3"
           if-no-files-found: error
+
+  push-to-builds:
+    if: github.ref == 'refs/heads/master'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: builds
+
+      - name: Download CS3 artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: cs3-builds
+          path: /tmp/cs3-files
+
+      - name: Replace CS3 files
+        run: |
+          git rm --ignore-unmatch *.cs3
+          cp /tmp/cs3-files/*.cs3 .
+          git add *.cs3
+
+      - name: Commit and push
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          branch: builds
+          commit_message: "chore: auto-update builds from master ${{ github.sha }}"
+          commit_user_name: GitHub Actions
+          commit_user_email: actions@github.com

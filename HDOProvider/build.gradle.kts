@@ -1,5 +1,5 @@
 // use an integer for version numbers
-version = 24
+version = 33
 
 android {
     buildFeatures {
@@ -8,7 +8,7 @@ android {
 }
 
 cloudstream {
-    language = "ta"
+    language = "en"
     // All of these properties are optional, you can safely remove them
     description = "HDO provider"
     authors = listOf("toonTamilIndia")

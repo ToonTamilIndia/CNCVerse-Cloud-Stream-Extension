@@ -1,5 +1,5 @@
 // use an integer for version numbers
-version = 32
+version = 52
 
 android {
     buildFeatures {
@@ -13,7 +13,7 @@ dependencies {
 
 cloudstream {
     // All of these properties are optional, you can safely remove them
-    language = "ta"
+    language = "en"
     description = "Watch Live sports and TV channels via SK Tech"
     authors = listOf("toonTamilIndia")
 

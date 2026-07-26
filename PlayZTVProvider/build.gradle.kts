@@ -1,5 +1,5 @@
 // use an integer for version numbers
-version = 16
+version = 33
 
 android {
     buildFeatures {
@@ -12,7 +12,7 @@ dependencies {
 }
 
 cloudstream {
-    language = "ta"
+    language = "en"
     description = "Watch Live TV channels & sports via PlayZTV"
     authors = listOf("toonTamilIndia")
 

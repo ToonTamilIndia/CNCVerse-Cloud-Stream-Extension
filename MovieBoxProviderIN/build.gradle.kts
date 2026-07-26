@@ -1,5 +1,5 @@
 // use an integer for version numbers
-version = 34
+version = 46
 
 android {
     buildFeatures {
@@ -8,7 +8,7 @@ android {
 }
 
 cloudstream {
-    language = "ta"
+    language = "hi"
     // All of these properties are optional, you can safely remove them
 
     description = "Multi Language Movies and Series Provider (Local homepage based on region)"

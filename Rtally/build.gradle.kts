@@ -1,5 +1,5 @@
 // use an integer for version numbers
-version = 36
+version = 46
 
 android {
     buildFeatures {
@@ -31,7 +31,7 @@ cloudstream {
         "AnimeMovie",
         "AsianDrama"
     )
-    language = "ta"
+    language = "en"
 
     iconUrl = "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/Rtally/icon.png"
 }

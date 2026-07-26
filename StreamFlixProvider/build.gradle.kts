@@ -1,5 +1,5 @@
 // use an integer for version numbers
-version = 23
+version = 32
 
 android {
     buildFeatures {
@@ -8,7 +8,7 @@ android {
 }
 
 cloudstream {
-    language = "ta"
+    language = "en"
     // All of these properties are optional, you can safely remove them
 
     description = "StreamFlix Multi Language Movies and Series Provider"

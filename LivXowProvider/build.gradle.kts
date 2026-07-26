@@ -1,5 +1,5 @@
 // use an integer for version numbers
-version = 3
+version = 14
 
 android {
     buildFeatures {
@@ -13,7 +13,7 @@ dependencies {
 }
 
 cloudstream {
-    language = "ta"
+    language = "en"
     description = "Watch Live Sports and TV Channels via LivXow"
     authors = listOf("toonTamilIndia")
 

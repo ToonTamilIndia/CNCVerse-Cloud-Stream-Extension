@@ -1,4 +1,4 @@
-version = 24
+version = 33
 
 android {
     buildFeatures {
@@ -8,7 +8,7 @@ android {
 
 
 cloudstream {
-    language = "ta"
+    language = "en"
     // All of these properties are optional, you can safely remove them
 
     description = "DoFlix Provider for Movies and TV Series"

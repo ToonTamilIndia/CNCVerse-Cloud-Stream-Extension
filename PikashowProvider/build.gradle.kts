@@ -1,5 +1,5 @@
 // use an integer for version numbers
-version = 21
+version = 30
 
 android {
     buildFeatures {
@@ -14,7 +14,7 @@ dependencies {
 
 cloudstream {
     // All of these properties are optional, you can safely remove them
-    language = "ta"
+    language = "en"
     description = "Stream movies and series from Pikashow"
     authors = listOf("toonTamilIndia")
 

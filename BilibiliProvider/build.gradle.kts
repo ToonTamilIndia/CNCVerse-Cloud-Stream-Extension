@@ -1,5 +1,5 @@
 // use an integer for version numbers
-version = 24
+version = 33
 
 android {
     buildFeatures {
@@ -8,7 +8,7 @@ android {
 }
 
 cloudstream {
-    language = "ta"
+    language = "en"
     // All of these properties are optional, you can safely remove them
     description = "Bilibili TV - International streaming platform for anime, movies, and variety shows (bilibili.tv)"
     authors = listOf("toonTamilIndia")

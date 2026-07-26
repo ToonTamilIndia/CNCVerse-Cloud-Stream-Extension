@@ -1,0 +1,9 @@
+{
+  "name": "CNC Repo Debloated",
+  "iconUrl": "https://raw.githubusercontent.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/refs/heads/builds/cnc.png",
+  "description": "Debloated CNC extensions - personal fork, no warranty. Use official repo to support devs.",
+  "manifestVersion": 1,
+  "pluginLists": [
+    "https://raw.githubusercontent.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/refs/heads/builds/plugins.json"
+  ]
+}

@@ -314,7 +314,6 @@ class CastleTvProvider : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        // Show star popup on first visit (shared across all CNCVerse plugins)
         
         return try {
             val securityKey = getSecurityKey() ?: return newHomePageResponse(emptyList())

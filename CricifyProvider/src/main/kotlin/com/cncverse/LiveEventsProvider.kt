@@ -204,7 +204,7 @@ class LiveEventsProvider : MainAPI() {
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        // Show star popup on first visit
+
 
 
         // Fetch live events using ProviderManager (same as providers)

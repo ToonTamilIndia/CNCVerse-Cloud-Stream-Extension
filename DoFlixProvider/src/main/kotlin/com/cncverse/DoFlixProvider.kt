@@ -449,7 +449,6 @@ class DoFlixProvider : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        // Show star popup on first visit (shared across all CNCVerse plugins)
         
         val responseText = getWithCustomHeaders(request.data)
         val homePageList = mutableListOf<HomePageList>()

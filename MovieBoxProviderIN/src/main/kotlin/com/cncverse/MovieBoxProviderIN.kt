@@ -208,7 +208,6 @@ class MovieBoxProviderIN : MainAPI() {
     }
 
      override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        // Show star popup on first visit (shared across all CNCVerse plugins)
         
         val url = "$mainUrl/wefeed-mobile-bff/tab-operating?page=1&tabId=0&version="
 
@@ -651,7 +650,7 @@ class MovieBoxProviderIN : MainAPI() {
             // Always add the original subject ID first as the default source with proper language name
             subjectIds.add(0, Pair(originalSubjectId, originalLanguageName))
 
-            //var hasAnyLinks = false
+
 
             // Process each subjectId (including dubs)
             for ((subjectId, language) in subjectIds) {
@@ -684,10 +683,10 @@ class MovieBoxProviderIN : MainAPI() {
                                 val streamUrl = stream["url"]?.asText() ?: continue
                                 val format = stream["format"]?.asText() ?: ""
                                 val resolutions = stream["resolutions"]?.asText() ?: ""
-                                //val codecName = stream["codecName"]?.asText() ?: "h264"
+
                                 val signCookieRaw = stream["signCookie"]?.asText()
                                 val signCookie = if (signCookieRaw.isNullOrEmpty()) null else signCookieRaw
-                                //val duration = stream["duration"]?.asInt()
+
                                 val id = stream["id"]?.asText() ?: "$subjectId|$season|$episode"
                                 val quality = getHighestQuality(resolutions)
                                 callback.invoke(

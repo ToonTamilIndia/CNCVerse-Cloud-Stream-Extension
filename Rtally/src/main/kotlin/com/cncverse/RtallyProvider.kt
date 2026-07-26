@@ -26,16 +26,7 @@ import android.os.Looper
 import com.lagradost.cloudstream3.ui.settings.Globals.TV
 import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
 
-//suspend fun main() {
-//    val providerTester = com.lagradost.cloudstreamtest.ProviderTester(RtallyProvider())
-////    providerTester.testAll()
-////    providerTester.testMainPage(verbose = true)
-////    providerTester.testSearch(query = "gun",verbose = true)
-////    providerTester.testLoad("https://rtally.vercel.app/post/from-season-1")
-////    providerTester.testLoad("https://rtally.vercel.app/post/the-substance")
-////    providerTester.testLoad("https://rtally.vercel.app/post/all-of-us-are-dead-season-1")
-//    providerTester.testLoad("https://rtally.vercel.app/post/bigg-boss-season-18")
-//}
+
 
 class RtallyProvider : MainAPI() {
     companion object {
@@ -72,7 +63,6 @@ class RtallyProvider : MainAPI() {
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
-        // Show star popup on first visit (shared across all CNCVerse plugins)
         
         val doc = app.get(
             "$mainUrl${request.data}?page=$page",

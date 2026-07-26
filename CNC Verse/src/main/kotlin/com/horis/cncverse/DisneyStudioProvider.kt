@@ -67,7 +67,7 @@ open class DisneyStudioProvider(
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        // Show star popup on first visit (shared across all CNCVerse plugins)
+
 
         cookie_value = if (cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
         val document = app.get(
@@ -99,19 +99,7 @@ open class DisneyStudioProvider(
         }
     }
 
-//     override suspend fun search(query: String): List<SearchResponse> {
-//        cookie_value = if (cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
-//        val url = "$mainUrl/mobile/hs/search.php?s=$query&t=${APIHolder.unixTime}"
-//        val data = app.get(url, referer = "$mainUrl/home", cookies = buildCookies())
-//            .parsed<SearchData>()
-//
-//        return data.searchResult.map {
-//            newAnimeSearchResponse(it.t, Id(it.id).toJson()) {
-//                posterUrl = "https://imgcdn.kim/hs/v/${it.id}.jpg"
-//                posterHeaders = mapOf("Referer" to "$mainUrl/home")
-//            }
-//        }
-//    }
+
 
     override suspend fun load(url: String): LoadResponse? {
         

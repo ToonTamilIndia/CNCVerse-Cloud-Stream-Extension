@@ -710,7 +710,7 @@ class MovieBoxProvider : MainAPI() {
             // Always add the original subject ID first as the default source with proper language name
             subjectIds.add(0, Pair(originalSubjectId, originalLanguageName))
 
-            //var hasAnyLinks = false
+
 
             // Process each subjectId (including dubs)
             for ((subjectId, language) in subjectIds) {
@@ -743,10 +743,10 @@ class MovieBoxProvider : MainAPI() {
                                 val streamUrl = stream["url"]?.asText() ?: continue
                                 val format = stream["format"]?.asText() ?: ""
                                 val resolutions = stream["resolutions"]?.asText() ?: ""
-                                //val codecName = stream["codecName"]?.asText() ?: "h264"
+
                                 val signCookieRaw = stream["signCookie"]?.asText()
                                 val signCookie = if (signCookieRaw.isNullOrEmpty()) null else signCookieRaw
-                                //val duration = stream["duration"]?.asInt()
+
                                 val id = stream["id"]?.asText() ?: "$subjectId|$season|$episode"
                                 val quality = getHighestQuality(resolutions)
                                 callback.invoke(

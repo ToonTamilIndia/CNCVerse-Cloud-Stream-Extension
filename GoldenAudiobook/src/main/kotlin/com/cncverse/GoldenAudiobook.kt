@@ -30,7 +30,6 @@ class GoldenAudiobook : MainAPI() { // all providers must be an instance of Main
     override var mainUrl = "https://goldenaudiobook.net"
     override var name = "Golden Audiobook"
 
-    // override val hasMainPage = true
     override val hasMainPage = true
 
     override var lang = "en"
@@ -45,7 +44,6 @@ class GoldenAudiobook : MainAPI() { // all providers must be an instance of Main
             )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        // Show star popup on first visit (shared across all CNCVerse plugins)
         
         val document = app.get("$mainUrl/${request.data}/page/$page/").document
         val home = document.select("article").mapNotNull { it.toSearchResult() }
@@ -54,7 +52,6 @@ class GoldenAudiobook : MainAPI() { // all providers must be an instance of Main
 
     private fun Element.toSearchResult(): AnimeSearchResponse? {
         val href = fixUrl(this.selectFirst("a[title]")?.attr("href") ?: return null)
-        // val href = "https://www.google.com"
         val title = this.selectFirst("h2")?.text() ?: return null
         val posterUrl = fixUrlNull(this.selectFirst("img")?.attr("data-src"))
         return newAnimeSearchResponse(title, href, TvType.Anime) { this.posterUrl = posterUrl }
@@ -62,7 +59,6 @@ class GoldenAudiobook : MainAPI() { // all providers must be an instance of Main
 
     private fun Element.toManualSearchResult(): AnimeSearchResponse? {
         val href = fixUrl(this.selectFirst("a[title]")?.attr("href") ?: return null)
-        // val href = "https://www.google.com"
         val title = this.selectFirst("h2")?.text() ?: return null
         val posterUrl = fixUrlNull(this.selectFirst("img")?.attr("src"))
         return newAnimeSearchResponse(title, href, TvType.Anime) { this.posterUrl = posterUrl }
@@ -120,12 +116,10 @@ class GoldenAudiobook : MainAPI() { // all providers must be an instance of Main
 
             newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
                 this.posterUrl = poster
-                // this.recommendations = recommendations
             }
         } else {
             newMovieLoadResponse(title, url, TvType.Movie, url) {
                 this.posterUrl = poster
-                // this.recommendations = recommendations
             }
         }
     }

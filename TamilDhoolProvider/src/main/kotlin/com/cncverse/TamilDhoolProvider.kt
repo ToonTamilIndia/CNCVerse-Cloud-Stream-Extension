@@ -1,6 +1,6 @@
 ﻿package com.cncverse
 
-//import android.util.Log
+
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
@@ -20,8 +20,7 @@ import android.os.Handler
 import android.os.Looper
 import com.lagradost.cloudstream3.ui.settings.Globals.TV
 import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
-//import java.time.LocalDate
-//import java.time.format.DateTimeFormatter
+
 
 class TamilDhoolProvider : MainAPI() { // all providers must be an instance of MainAPI
     companion object {
@@ -54,7 +53,6 @@ class TamilDhoolProvider : MainAPI() { // all providers must be an instance of M
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
-        // Show star popup on first visit (shared across all CNCVerse plugins)
         
         val query = request.data.format(page)
         val document = app.post(

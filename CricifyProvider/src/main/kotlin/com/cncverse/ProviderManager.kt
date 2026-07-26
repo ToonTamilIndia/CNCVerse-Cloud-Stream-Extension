@@ -236,4 +236,62 @@ object ProviderManager {
             emptyList()
         }
     }
+
+    suspend fun fetchCustomEvents(catLink: String): List<LiveEventData> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val request = Request.Builder()
+                    .url(catLink)
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                    .build()
+                val response = client.newCall(request).execute()
+                if (response.isSuccessful) {
+                    val encryptedData = response.body.string()
+                    if (!encryptedData.isNullOrBlank()) {
+                        val decryptedData = CryptoUtils.decryptData(encryptedData.trim())
+                        if (!decryptedData.isNullOrBlank()) {
+                            val wrappers = parseJson<List<CricifyChannelWrapper>>(decryptedData)
+                            val events = wrappers.mapIndexedNotNull { index, wrapper ->
+                                try {
+                                    val channelData = parseJson<CricifyChannelData>(wrapper.channel)
+                                    if (channelData.visible == false) return@mapIndexedNotNull null
+                                    val links = channelData.links
+                                    if (links.isNullOrBlank()) return@mapIndexedNotNull null
+                                    LiveEventData(
+                                        id = index + 1,
+                                        title = channelData.name ?: "Unknown Channel",
+                                        image = channelData.logo,
+                                        slug = links.substringBeforeLast(".", ""),
+                                        cat = "Custom",
+                                        eventInfo = LiveEventInfo(
+                                            null, null, null, null, null,
+                                            channelData.name, channelData.logo, "0",
+                                            null, null, null
+                                        ),
+                                        publish = 1,
+                                        formats = if (!channelData.link_names.isNullOrEmpty()) {
+                                            channelData.link_names.map { name ->
+                                                LiveEventFormat(title = name, webLink = links)
+                                            }
+                                        } else {
+                                            links.split(", ").mapIndexed { i, link ->
+                                                LiveEventFormat(title = "Link ${i + 1}", webLink = link)
+                                            }
+                                        }
+                                    )
+                                } catch (e: Exception) {
+                                    e.printStackTrace()
+                                    null
+                                }
+                            }
+                            return@withContext events.filter { it.publish == 1 }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            emptyList()
+        }
+    }
 }

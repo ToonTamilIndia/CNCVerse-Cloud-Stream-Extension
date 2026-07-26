@@ -4,7 +4,6 @@ version = 50
 android {
     buildFeatures {
         buildConfig = true
-        viewBinding = true
     }
 }
 dependencies {

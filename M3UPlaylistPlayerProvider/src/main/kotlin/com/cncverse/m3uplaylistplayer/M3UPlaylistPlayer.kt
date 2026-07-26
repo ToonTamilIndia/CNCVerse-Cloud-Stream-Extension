@@ -150,6 +150,42 @@ class M3UPlaylistPlayer(
         }
     }
 
+    private fun decryptContent(content: String): String {
+        return try {
+            if (content.startsWith("#EXTM3U") || content.startsWith("#EXTINF") || content.startsWith("#KODIPROP")) {
+                return content
+            }
+
+            val trimmedContent = content.trim()
+
+            if (trimmedContent.length < 79) {
+                return trimmedContent
+            }
+
+            val part1 = trimmedContent.substring(0, 10)
+            val part2 = trimmedContent.substring(34, trimmedContent.length - 54)
+            val part3 = trimmedContent.substring(trimmedContent.length - 10)
+            val encryptedData = part1 + part2 + part3
+
+            val ivBase64 = trimmedContent.substring(10, 34)
+            val keyBase64 = trimmedContent.substring(trimmedContent.length - 54, trimmedContent.length - 10)
+
+            val iv = Base64.decode(ivBase64, Base64.DEFAULT)
+            val key = Base64.decode(keyBase64, Base64.DEFAULT)
+            val encrypted = Base64.decode(encryptedData, Base64.DEFAULT)
+
+            val cipher = Cipher.getInstance("AES/CBC/PKCS5PADDING")
+            val secretKey = SecretKeySpec(key, "AES")
+            val ivSpec = IvParameterSpec(iv)
+            cipher.init(Cipher.DECRYPT_MODE, secretKey, ivSpec)
+            val decrypted = cipher.doFinal(encrypted)
+
+            String(decrypted, StandardCharsets.UTF_8)
+        } catch (e: Exception) {
+            content
+        }
+    }
+
     private fun getDRMKeysFromLicenseServer(url: String, kid: String): String {
         val userAgent = "OTT Navigator/1.7.1.4 (Linux;Android 13; en; 1fin92n)"
         val client = OkHttpClient.Builder()
@@ -187,6 +223,8 @@ class M3UPlaylistPlayer(
         page: Int,
         request : MainPageRequest
     ): HomePageResponse {
+        val rawContent = getWithCustomHeaders(mainUrl)
+        val decryptedContent = decryptContent(rawContent)
         val data = IptvPlaylistParser().parseM3U(decryptedContent)
         return newHomePageResponse(data.items.groupBy{it.attributes["group-title"]}.map { group ->
             val title = group.key ?: "Channels"
@@ -328,25 +366,25 @@ class M3UPlaylistPlayer(
                         }
                         this.licenseUrl = loadData.licenseUrl.trim()
                     }
-                )
-            } else {
-                // Fallback to regular MPD link if no DRM keys available
-                callback.invoke(
-                    newExtractorLink(
-                        this.name,
-                        this.name,
-                        url = loadData.url,
-                        ExtractorLinkType.DASH
-                    ) {
-                        this.referer = ""
-                        this.quality = Qualities.Unknown.value
-                        if (headers.isNotEmpty()) {
-                            this.headers = headers
-                        }
+            )
+            // Fallback to regular MPD link if no DRM keys available
+            callback.invoke(
+                newExtractorLink(
+                    this.name,
+                    this.name,
+                    url = loadData.url,
+                    ExtractorLinkType.DASH
+                ) {
+                    this.referer = ""
+                    this.quality = Qualities.Unknown.value
+                    if (headers.isNotEmpty()) {
+                        this.headers = headers
                     }
-                )
-            }
-        } else if(loadData.url.contains("&e=.m3u")) {
+                }
+            )
+        }
+
+        if (loadData.url.contains("&e=.m3u")) {
             val headers = mutableMapOf<String, String>()
             headers.putAll(loadData.headers)
             if (loadData.userAgent.isNotEmpty()) {
@@ -466,7 +504,7 @@ class M3UPlaylistPlayer(
             }
         }
     }
-
+}
 
 data class Playlist(
     val items: List<PlaylistItem> = emptyList(),

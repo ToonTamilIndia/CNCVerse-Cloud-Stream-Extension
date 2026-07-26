@@ -20,6 +20,19 @@ import javax.crypto.spec.SecretKeySpec
  */
 object LivXowCryptoUtils {
 
+    private val AES_KEY = "M8mkKlNL75K4nl15"
+    private val AES_IV = "kN7m5Kl1pN5nk4xK"
+    private const val SHUFFLED_ALPHABET = "fFgGjJkKaApPbBmMoOzZeEnNcCdDrRqQtTvVuUxXhHiIwWyYlLsS"
+    private const val STANDARD_ALPHABET = "aAbBcCdDeEfFgGhHiIjJkKlLmMnNoOpPqQrRsStTuUvVwWxXyYzZ"
+
+    private val decodeTable: CharArray by lazy {
+        val table = CharArray(128) { it.toChar() }
+        for (i in SHUFFLED_ALPHABET.indices) {
+            table[SHUFFLED_ALPHABET[i].code] = STANDARD_ALPHABET[i]
+        }
+        table
+    }
+
     /**
      * Step 1 — applies the substitution cipher to [str].
      * Characters outside 0..127 are passed through unchanged.
@@ -53,8 +66,8 @@ object LivXowCryptoUtils {
             val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
             cipher.init(
                 Cipher.DECRYPT_MODE,
-                SecretKeySpec(AES_KEY, "AES"),
-                IvParameterSpec(AES_IV)
+                SecretKeySpec(AES_KEY.toByteArray(Charsets.UTF_8), "AES"),
+                IvParameterSpec(AES_IV.toByteArray(Charsets.UTF_8))
             )
             String(cipher.doFinal(decoded), Charsets.UTF_8)
         } catch (_: Exception) {

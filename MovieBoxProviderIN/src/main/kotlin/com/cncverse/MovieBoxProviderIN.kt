@@ -59,6 +59,8 @@ class MovieBoxProviderIN : MainAPI() {
     companion object {
         var context: android.content.Context? = null
     }
+
+    @Volatile private var bearerToken: String? = null
     override var mainUrl = "https://api3.aoneroom.com"
     override var name = "MovieBoxIN"
     override val hasMainPage = true
@@ -107,6 +109,43 @@ class MovieBoxProviderIN : MainAPI() {
         val model = brandModels[brand]!!.random()
         return BrandModel(brand, model)
     }
+
+    /**
+     * Fetches an anonymous bearer token from the API.
+     * Used as a fallback when no x-user header is available.
+     */
+    private suspend fun fetchAnonymousToken(): String? {
+        try {
+            if (bearerToken != null) return bearerToken
+            val ua = "com.community.oneroom/50020088 (Linux; U; Android 13; en_US; Pixel 6; Build/TQ3A.230901.001; Cronet/145.0.7582.0)"
+            val pingUrl = "$mainUrl/wefeed-mobile-bff/tab/ranking-list?tabId=0&categoryType=4516404531735022304&page=1&perPage=1"
+            val xct = generateXClientToken()
+            val sig = generateXTrSignature("GET", "application/json", "application/json", pingUrl)
+            val headers = mapOf(
+                "user-agent" to ua,
+                "accept" to "application/json",
+                "content-type" to "application/json",
+                "x-client-token" to xct,
+                "x-tr-signature" to sig,
+                "x-client-info" to """{"package_name":"com.community.oneroom","version_name":"3.0.13.0325.03","version_code":50020088,"os":"android","os_version":"13","device_id":"$deviceId","install_store":"ps","gaid":"1b2212c1-dadf-43c3-a0c8-bd6ce48ae22d","brand":"google","model":"Pixel 6","system_language":"en","net":"NETWORK_WIFI","region":"US","timezone":"Asia/Calcutta","sp_code":""}""",
+                "x-client-status" to "0"
+            )
+            val response = app.get(pingUrl, headers = headers)
+            if (response.code != 200) return null
+            val xUser = response.headers["x-user"]
+            if (xUser.isNullOrBlank()) return null
+            val json = jacksonObjectMapper().readTree(xUser)
+            val token = json["token"]?.asText()
+            if (!token.isNullOrBlank()) {
+                bearerToken = token
+            }
+            return token
+        } catch (e: Exception) {
+            println("MovieBoxIN: fetchAnonymousToken failed: ${e.message}")
+            return null
+        }
+    }
+
     @SuppressLint("UseKtx")
     private fun buildCanonicalString(
         method: String,

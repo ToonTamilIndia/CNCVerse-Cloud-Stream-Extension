@@ -43,6 +43,7 @@ import android.net.Uri
 class SportzxLiveEventsProvider : MainAPI() {
 
     companion object {
+        @Volatile var context: android.content.Context? = null
     }
 
     override var mainUrl = "https://sportzx.live"
@@ -303,6 +304,13 @@ class SportzxLiveEventsProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        val loadData = parseJson<SportzxLoadData>(data)
+
+        val streamJson = SportzxProviderManager.fetchStreamData(loadData.eventId)
+        if (streamJson.isNullOrBlank()) {
+            println("Sportzx: No stream data for event ${loadData.eventId}")
+            return false
+        }
 
         val streams = try {
             parseJson<List<SportzxStreamEntry>>(streamJson)
@@ -319,6 +327,8 @@ class SportzxLiveEventsProvider : MainAPI() {
             val parts = link.split("|", limit = 2)
             val url   = parts[0].trim()
             if (url.isBlank()) return@forEach
+
+            val drmParts = stream.api?.split(":", limit = 2)
 
             // Parse headers after |
             val headers = mutableMapOf<String, String>()
@@ -371,7 +381,6 @@ class SportzxLiveEventsProvider : MainAPI() {
                                     }
                                 )
                             } else {
-                                // hex conversion failed — deliver as plain DASH
                                 callback.invoke(
                                     newExtractorLink(this.name, serverName, url, ExtractorLinkType.DASH) {
                                         this.quality = Qualities.Unknown.value
@@ -380,7 +389,6 @@ class SportzxLiveEventsProvider : MainAPI() {
                                 )
                             }
                         } else {
-                            // No api / empty — plain DASH without DRM keys
                             callback.invoke(
                                 newExtractorLink(this.name, serverName, url, ExtractorLinkType.DASH) {
                                     this.quality = Qualities.Unknown.value
@@ -390,7 +398,6 @@ class SportzxLiveEventsProvider : MainAPI() {
                         }
                     }
                     else -> {
-                        // HLS / M3U8
                         val finalHeaders = headers.toMutableMap()
                         if (!finalHeaders.containsKey("User-Agent")) {
                             finalHeaders["User-Agent"] =

@@ -322,6 +322,102 @@ object LivXowProviderManager {
         }
     }
 
+    // ── Custom events (channels / categories) ─────────────────────────────────
+
+    /**
+     * Fetches custom events for a given category/channel link.
+     * [catLink] is a full URL or relative path (e.g. "channels/XXX.txt").
+     * Returns list of LiveEventData, or empty list on failure.
+     */
+    suspend fun fetchCustomEvents(catLink: String): List<LiveEventData> = withContext(Dispatchers.IO) {
+        try {
+            val baseUrl = getBaseUrl()
+            val url = if (catLink.startsWith("http")) catLink else "$baseUrl$catLink"
+            println("LivXow: Fetching custom events from $url")
+
+            val json = fetchDecrypted(url) ?: return@withContext emptyList()
+
+            val wrappers = parseJson<List<LivXowChannelWrapper>>(json)
+
+            wrappers.mapIndexedNotNull { index, wrapper ->
+                if (wrapper.channel != null && wrapper.channel.isNotBlank()) {
+                    try {
+                        val channelData = parseJson<LivXowChannelData>(wrapper.channel)
+                        if (channelData.visible == false) return@mapIndexedNotNull null
+                        val links = channelData.links?.trim()
+                        if (links.isNullOrBlank()) return@mapIndexedNotNull null
+                        val slug = links.removeSuffix(".txt")
+                        LiveEventData(
+                            id = index + 1,
+                            title = channelData.name ?: "Unknown Channel",
+                            image = channelData.logo,
+                            slug = slug,
+                            cat = "Custom",
+                            publish = 1,
+                            eventInfo = LiveEventInfo(
+                                teamA = channelData.name,
+                                teamB = null,
+                                teamAFlag = channelData.logo,
+                                teamBFlag = null,
+                                eventCat = "Custom",
+                                eventName = channelData.name,
+                                eventLogo = channelData.logo,
+                                isHot = null,
+                                eventType = null,
+                                startTime = null,
+                                endTime = null
+                            ),
+                            formats = listOf(LiveEventFormat(title = channelData.name, webLink = null))
+                        )
+                    } catch (e: Exception) {
+                        println("LivXow: Failed to parse channel at index $index: ${e.message}")
+                        return@mapIndexedNotNull null
+                    }
+                } else if (wrapper.highlight != null && wrapper.highlight.isNotBlank()) {
+                    try {
+                        val ev = parseJson<LivXowEvent>(wrapper.highlight)
+                        if (ev.visible == false) return@mapIndexedNotNull null
+                        if (ev.streamSlug.isBlank()) return@mapIndexedNotNull null
+                        // Create link names from event's link_names or use default
+                        val formats = ev.link_names?.mapNotNull { linkName ->
+                            linkName["name"]?.let { LiveEventFormat(title = it, webLink = null) }
+                        } ?: listOf(LiveEventFormat(title = "Link 1", webLink = null))
+                        LiveEventData(
+                            id = index + 1,
+                            title = ev.displayName.ifBlank { ev.eventName ?: "Event $index" },
+                            image = ev.thumbUrl,
+                            slug = ev.streamSlug,
+                            cat = ev.categoryName,
+                            publish = 1,
+                            eventInfo = LiveEventInfo(
+                                teamA = ev.teamAName,
+                                teamB = ev.teamBName,
+                                teamAFlag = ev.teamAFlag,
+                                teamBFlag = ev.teamBFlag,
+                                eventCat = ev.categoryName,
+                                eventName = ev.eventName ?: ev.displayName,
+                                eventLogo = ev.thumbUrl,
+                                isHot = null,
+                                eventType = ev.categoryName,
+                                startTime = ev.startTimeString(),
+                                endTime = ev.endTimeString()
+                            ),
+                            formats = formats
+                        )
+                    } catch (e: Exception) {
+                        println("LivXow: Failed to parse highlight at index $index: ${e.message}")
+                        return@mapIndexedNotNull null
+                    }
+                } else {
+                    null
+                }
+            }
+        } catch (e: Exception) {
+            println("LivXow: fetchCustomEvents exception: ${e.message}")
+            emptyList()
+        }
+    }
+
     // ── Stream URL fetching ───────────────────────────────────────────────────
 
     /**

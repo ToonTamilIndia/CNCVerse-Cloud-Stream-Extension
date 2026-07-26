@@ -250,6 +250,54 @@ object PlayZTVProviderManager {
      * Fetches stream list from `{baseUrl}/{slug}.txt`.
      * Returns a list of [PlayZStreamUrl] or null.
      */
+    suspend fun fetchCustomEvents(catLink: String): List<PlayZLiveEventData> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val decrypted = fetchDecrypted(catLink)
+                if (!decrypted.isNullOrBlank()) {
+                    val wrappers = parseJson<List<PlayZTVChannelWrapper>>(decrypted)
+                    val events = wrappers.mapIndexedNotNull { index, wrapper ->
+                        try {
+                            val channelData = parseJson<PlayZTVChannelData>(wrapper.channel)
+                            if (channelData.visible == false) return@mapIndexedNotNull null
+                            val links = channelData.links
+                            if (links.isNullOrBlank()) return@mapIndexedNotNull null
+                            PlayZLiveEventData(
+                                id = index + 1,
+                                title = channelData.name ?: "Unknown Channel",
+                                image = channelData.logo,
+                                slug = links.substringBeforeLast(".", ""),
+                                cat = "Custom",
+                                eventInfo = PlayZLiveEventInfo(
+                                    null, null, null, null, null,
+                                    channelData.name, channelData.logo, "0",
+                                    null, null, null
+                                ),
+                                publish = 1,
+                                formats = if (!channelData.link_names.isNullOrEmpty()) {
+                                    channelData.link_names.map { name ->
+                                        PlayZLiveEventFormat(title = name, webLink = links)
+                                    }
+                                } else {
+                                    links.split(", ").mapIndexed { i, link ->
+                                        PlayZLiveEventFormat(title = "Link ${i + 1}", webLink = link)
+                                    }
+                                }
+                            )
+                        } catch (e: Exception) {
+                            println("PlayZTV: Failed to parse custom event at $index – ${e.message}")
+                            null
+                        }
+                    }
+                    return@withContext events.filter { it.publish == 1 }
+                }
+            } catch (e: Exception) {
+                println("PlayZTV: fetchCustomEvents exception – ${e.message}")
+            }
+            emptyList()
+        }
+    }
+
     suspend fun fetchChannelStreams(slug: String): List<PlayZStreamUrl>? = withContext(Dispatchers.IO) {
         try {
             val decrypted = fetchDecrypted("$slug.txt")

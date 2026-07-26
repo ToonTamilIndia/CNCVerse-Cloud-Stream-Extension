@@ -18,27 +18,15 @@ import java.util.concurrent.TimeUnit
  */
 object LivXowFirebaseFetcher {
 
-    // Firebase credentials — injected from local.properties via BuildConfig
-    private val API_KEY: String
-        get() = try {
-            com.cncverse.BuildConfig.LIVXOW_FIREBASE_API_KEY
-        } catch (e: Exception) {
-            ""
-        }
-
-    private val APP_ID: String
-        get() = try {
-            com.cncverse.BuildConfig.LIVXOW_FIREBASE_APP_ID
-        } catch (e: Exception) {
-            ""
-        }
-
-    private val PROJECT_NUMBER: String
-        get() = try {
-            com.cncverse.BuildConfig.LIVXOW_FIREBASE_PROJECT_NUMBER
-        } catch (e: Exception) {
-            ""
-        }
+    private const val API_KEY = "AIzaSyBIfjXqlm2QLLctnTUQUNK9j9Kf2ybS7yw"
+    private const val APP_ID = "1:459539398637:android:96270124df48971af131e4"
+    private const val PROJECT_NUMBER = "459539398637"
+    private const val PACKAGE_NAME = "com.livxow.tv"
+    private const val APP_VERSION = "2.3"
+    private const val APP_BUILD = "5"
+    private const val APP_INSTANCE_ID = "e8oXwurwSlyewCIEp8rdgs"
+    private const val PLATFORM_VERSION = "33"
+    private const val SDK_VERSION = "23.1.0"
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
@@ -143,8 +131,13 @@ object LivXowFirebaseFetcher {
         return entries?.get("web_url")
     }
 
-    /**
-     * Fetches all config entries at once to avoid multiple network round-trips.
-     * @return Triple of (apiUrl, telegramUrl, webUrl) — any may be null
-     *
+    suspend fun getAllConfig(): Triple<String?, String?, String?> {
+        val entries = fetchRemoteConfig()
+        val telegram = entries?.get("new_telegram_url") ?: entries?.get("telegram_url")
+        return Triple(
+            entries?.get("api_url")?.trimEnd('/'),
+            telegram,
+            entries?.get("web_url")
+        )
+    }
 }

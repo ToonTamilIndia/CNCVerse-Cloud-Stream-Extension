@@ -26,6 +26,16 @@ class SportzxPlugin : Plugin() {
             SportzxProviderManager.fetchProviders()
         }
 
+        // Register VOD providers
+        val vodProviders = runBlocking {
+            SportzxProviderManager.fetchProviders()
+        }
+        vodProviders.forEach { provider ->
+            val title   = provider["title"] as String
+            val catLink = provider["catLink"] as String
+            registerMainAPI(SportzxVODProvider(title, catLink))
+        }
+
         val providerSettings = iptvProviders.mapNotNull { provider ->
             val title = provider["title"] as? String ?: return@mapNotNull null
             title to (sharedPref?.getBoolean(title, false) ?: false)

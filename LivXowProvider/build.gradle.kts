@@ -4,7 +4,6 @@ version = 3
 android {
     buildFeatures {
         buildConfig = true
-        viewBinding = true
     }
 }
 

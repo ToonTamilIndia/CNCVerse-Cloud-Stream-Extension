@@ -17,28 +17,9 @@ import java.util.concurrent.TimeUnit
 object FirebaseRemoteConfigFetcher {
     
     private const val PACKAGE_NAME = "com.cricfy.tv"
-    
-    // Get credentials from BuildConfig (injected from local.properties)
-    private val API_KEY: String
-        get() = try {
-            com.cncverse.BuildConfig.CRICFY_FIREBASE_API_KEY
-        } catch (e: Exception) {
-            ""
-        }
-    
-    private val APP_ID: String
-        get() = try {
-            com.cncverse.BuildConfig.CRICFY_FIREBASE_APP_ID
-        } catch (e: Exception) {
-            ""
-        }
-    
-    private val PROJECT_NUMBER: String
-        get() = try {
-            com.cncverse.BuildConfig.CRICFY_FIREBASE_PROJECT_NUMBER
-        } catch (e: Exception) {
-            ""
-        }
+    private const val API_KEY = "AIzaSyAh9jkEU0E_UYxH0m_BKAt-uUSTiTPqhb8"
+    private const val APP_ID = "1:963020218535:android:47ec53252c64fb3c9c7b82"
+    private const val PROJECT_NUMBER = "963020218535"
     
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)

@@ -290,4 +290,67 @@ object ProviderManager {
             emptyList()
         }
     }
+
+    suspend fun fetchCustomEvents(catLink: String): List<LiveEventData> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val baseUrl = getBaseUrl()
+                val safeLink = catLink.trimStart('/')
+                val eventsUrl = "$baseUrl/$safeLink"
+
+                val request = Request.Builder()
+                    .url(eventsUrl)
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                    .build()
+                val response = client.newCall(request).execute()
+                if (response.isSuccessful) {
+                    val encryptedData = response.body.string()
+                    if (!encryptedData.isNullOrBlank()) {
+                        val decryptedData = SKLiveCryptoUtils.decryptSKLive(encryptedData.trim())
+                        if (!decryptedData.isNullOrBlank()) {
+                            val wrappers = parseJson<List<SKTechChannelWrapper>>(decryptedData)
+                            val events = wrappers.mapIndexedNotNull { index, wrapper ->
+                                try {
+                                    val channelData = parseJson<SKTechChannelData>(wrapper.channel)
+                                    val links = channelData.links
+                                    if (links.isNullOrBlank()) return@mapIndexedNotNull null
+                                    val visible = channelData.visible != false
+                                    LiveEventData(
+                                        id = index + 1,
+                                        title = channelData.name ?: "Unknown Channel",
+                                        image = channelData.logo,
+                                        slug = links.substringBeforeLast(".", ""),
+                                        cat = "Custom",
+                                        eventInfo = LiveEventInfo(
+                                            null, null, null, null, null,
+                                            channelData.name, channelData.logo, "0",
+                                            null, null, null
+                                        ),
+                                        publish = if (visible) 1 else 0,
+                                        formats = if (!channelData.link_names.isNullOrEmpty()) {
+                                            channelData.link_names.map { name ->
+                                                LiveEventFormat(title = name, webLink = links)
+                                            }
+                                        } else {
+                                            links.split(", ").mapIndexed { i, link ->
+                                                LiveEventFormat(title = "Link ${i + 1}", webLink = link)
+                                            }
+                                        }
+                                    )
+                                } catch (e: Exception) {
+                                    println("SKTech: Failed to parse custom event at $index: ${e.message}")
+                                    null
+                                }
+                            }
+                            return@withContext events.filter { it.publish == 1 }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                println("SKTech: Exception fetching custom events: ${e.message}")
+                e.printStackTrace()
+            }
+            emptyList()
+        }
+    }
 }

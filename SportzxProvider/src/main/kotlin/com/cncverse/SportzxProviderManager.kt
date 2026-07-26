@@ -152,5 +152,170 @@ object SportzxProviderManager {
     fun invalidateCache() {
         cachedBaseUrl = null
     }
- 
+
+    // ── Private fetch+decrypt helper ──────────────────────────────────────────
+
+    private suspend fun fetchDecrypted(url: String): String? = withContext(Dispatchers.IO) {
+        try {
+            val request = Request.Builder().url(url).apply {
+                baseHeaders.forEach { (k, v) -> header(k, v) }
+            }.build()
+            val response = client.newCall(request).execute()
+            if (!response.isSuccessful) {
+                println("Sportzx: HTTP ${response.code} → $url")
+                return@withContext null
+            }
+            val bodyStr = response.body.string()
+            if (bodyStr.isBlank()) return@withContext null
+            try {
+                val envelope = parseJson<Map<String, String>>(bodyStr)
+                val encrypted = envelope["data"] ?: run {
+                    println("Sportzx: No 'data' field in response from $url")
+                    return@withContext null
+                }
+                val decrypted = SportzxCryptoUtils.decrypt(encrypted)
+                if (decrypted.isNullOrBlank()) {
+                    println("Sportzx: Decryption failed for $url")
+                    return@withContext null
+                }
+                decrypted
+            } catch (e: Exception) {
+                println("Sportzx: Failed to parse JSON envelope from $url — ${e.message}")
+                null
+            }
+        } catch (e: Exception) {
+            println("Sportzx: Exception fetching $url — ${e.message}")
+            null
+        }
+    }
+
+    // ── fetchProviders → /cats.json → List<Map<String,Any>> ──────────────────
+
+    suspend fun fetchProviders(): List<Map<String, Any>> = withContext(Dispatchers.IO) {
+        try {
+            val baseUrl = getBaseUrl()
+            if (baseUrl.isBlank()) return@withContext emptyList()
+            val url = "$baseUrl/cats.json"
+            println("Sportzx: Fetching categories from $url")
+            val json = fetchDecrypted(url) ?: return@withContext emptyList()
+            try {
+                val categories = parseJson<List<SportzxCategoryData>>(json)
+                categories.mapIndexedNotNull { index, cat ->
+                    val catLink = cat.catLink?.trim()
+                    if (catLink.isNullOrBlank()) return@mapIndexedNotNull null
+                    mapOf(
+                        "id" to (cat.id?.toIntOrNull() ?: (index + 1)),
+                        "title" to cat.title,
+                        "image" to (cat.image ?: ""),
+                        "catLink" to catLink
+                    )
+                }
+            } catch (e: Exception) {
+                println("Sportzx: Failed to parse categories — ${e.message}")
+                emptyList()
+            }
+        } catch (e: Exception) {
+            println("Sportzx: fetchProviders exception — ${e.message}")
+            emptyList()
+        }
+    }
+
+    // ── fetchLiveEvents → /events.json (or custom path) → List<SportzxLiveEventData> ──
+
+    suspend fun fetchLiveEvents(path: String = "events.json"): List<SportzxLiveEventData> = withContext(Dispatchers.IO) {
+        try {
+            val baseUrl = getBaseUrl()
+            if (baseUrl.isBlank()) return@withContext emptyList()
+            val url = "$baseUrl/$path"
+            println("Sportzx: Fetching events from $url")
+            val json = fetchDecrypted(url) ?: return@withContext emptyList()
+            try {
+                val events = parseJson<List<SportzxEventData>>(json)
+                events.mapIndexedNotNull { index, ev ->
+                    if (ev.publish == "1") return@mapIndexedNotNull null
+                    val eventId = ev.id ?: return@mapIndexedNotNull null
+                    val title = ev.title ?: "Unknown Event"
+                    val image = if (ev.image.isNullOrBlank() || ev.image == "o") null else ev.image
+                    val cat = ev.cat
+                    val info = ev.eventInfo
+                    val endTime = if (path.contains("highlights", ignoreCase = true)) "1970/01/01 00:00:00 +0000" else info?.endTime
+                    val liveEventInfo = SportzxLiveEventInfo(
+                        teamA = info?.teamA,
+                        teamB = info?.teamB,
+                        teamAFlag = info?.teamAFlag,
+                        teamBFlag = info?.teamBFlag,
+                        eventCat = cat,
+                        eventName = info?.eventName ?: ev.title,
+                        eventLogo = info?.eventLogo,
+                        isHot = info?.isHot,
+                        eventType = if (info == null || info.eventType.isNullOrBlank() || info.eventType == "null") null else info.eventType,
+                        startTime = info?.startTime,
+                        endTime = endTime
+                    )
+                    val formats = ev.formatsNew?.map { fmt ->
+                        SportzxLiveEventFormat(
+                            title = fmt.title,
+                            logo = if (fmt.logo.isNullOrBlank()) null else fmt.logo
+                        )
+                    } ?: emptyList()
+                    SportzxLiveEventData(
+                        id = index + 1,
+                        title = title,
+                        image = image,
+                        eventId = eventId,
+                        cat = cat,
+                        eventInfo = liveEventInfo,
+                        publish = 1,
+                        formats = formats
+                    )
+                }
+            } catch (e: Exception) {
+                println("Sportzx: Failed to parse events — ${e.message}")
+                emptyList()
+            }
+        } catch (e: Exception) {
+            println("Sportzx: fetchLiveEvents exception — ${e.message}")
+            emptyList()
+        }
+    }
+
+    // ── fetchStreamData → /channels/{eventId}.json (fallback {eventId}e.json) ──
+
+    suspend fun fetchStreamData(eventId: Int): String? = fetchStreamData(eventId.toString())
+
+    suspend fun fetchStreamData(eventId: String): String? = withContext(Dispatchers.IO) {
+        try {
+            val baseUrl = getBaseUrl()
+            if (baseUrl.isBlank()) return@withContext null
+            val primary = fetchDecrypted("$baseUrl/channels/$eventId.json")
+            if (primary != null) return@withContext primary
+            println("Sportzx: Primary channel URL failed, trying fallback ${eventId}e.json")
+            fetchDecrypted("$baseUrl/channels/${eventId}e.json")
+        } catch (e: Exception) {
+            println("Sportzx: fetchStreamData exception — ${e.message}")
+            null
+        }
+    }
+
+    // ── fetchVODCategory → /cats/{catLink}.json ──────────────────────────────
+
+    suspend fun fetchVODCategory(catLink: String): List<SportzxVODData> = withContext(Dispatchers.IO) {
+        try {
+            val baseUrl = getBaseUrl()
+            if (baseUrl.isBlank()) return@withContext emptyList()
+            val url = "$baseUrl/cats/${catLink.lowercase()}.json"
+            println("Sportzx: Fetching VOD category from $url")
+            val json = fetchDecrypted(url) ?: return@withContext emptyList()
+            try {
+                val items = parseJson<List<SportzxVODData>>(json)
+                items.filter { it.publish == "1" && !it.id.isNullOrBlank() }
+            } catch (e: Exception) {
+                println("Sportzx: Failed to parse VOD category $catLink — ${e.message}")
+                emptyList()
+            }
+        } catch (e: Exception) {
+            println("Sportzx: fetchVODCategory exception — ${e.message}")
+            emptyList()
+        }
+    }
 }

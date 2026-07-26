@@ -7,11 +7,11 @@ import javax.crypto.spec.SecretKeySpec
 
 
 object SKLiveCryptoUtils {
-    private val V23_KEY = BuildConfig.SKLIVE_V23_KEY.toByteArray(Charsets.UTF_8)
-    private val V23_IV  = BuildConfig.SKLIVE_V23_IV.toByteArray(Charsets.UTF_8)
+    private val V23_KEY = "ST00ZGt3UGlPdVJP".toByteArray(Charsets.UTF_8)
+    private val V23_IV  = "d2WT1lR4ckEvUsdk".toByteArray(Charsets.UTF_8)
 
-    private val LEGACY_AES_KEY = hexStringToByteArray(BuildConfig.SKLIVE_KEY)
-    private val LEGACY_AES_IV  = hexStringToByteArray(BuildConfig.SKLIVE_IV)
+    private val LEGACY_AES_KEY = hexStringToByteArray("6c326c356b4237784335715031724b31")
+    private val LEGACY_AES_IV  = hexStringToByteArray("70314b356e50377542386848316c3139")
 
     private val LOOKUP_TABLE_D = (
         "\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b\t\n\u000B\u000C\r\u000E\u000F" +
@@ -23,6 +23,12 @@ object SKLiveCryptoUtils {
         "`egmnkabuvcdyhli" +
         "fpozqsrwtxj{|}~\u007F"
     )
+
+    private val V25_KEY1 = "V9LQR42pNKc7smaX"
+    private val V25_KEY2 = "d2WT1lR4ckEvUsdk"
+    private val V25_IV = "I=4dkwPiOuROD+pD"
+    private val FALLBACK_AES_KEY = "l2l5kB7xC5qP1rK1"
+    private val FALLBACK_AES_IV = "p1K5nP7uB8hH1l19"
 
     private fun hexStringToByteArray(hex: String): ByteArray {
         val len = hex.length

@@ -4,7 +4,6 @@ version = 16
 android {
     buildFeatures {
         buildConfig = true
-        viewBinding = true
     }
 }
 dependencies {

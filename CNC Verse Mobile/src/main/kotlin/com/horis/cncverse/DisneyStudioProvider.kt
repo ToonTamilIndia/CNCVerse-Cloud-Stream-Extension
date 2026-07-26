@@ -225,6 +225,7 @@ open class DisneyStudioProvider(
                     newExtractorLink(name, name, source.file, type = ExtractorLinkType.M3U8) {
                         this.quality = getQualityFromName(source.file.substringAfter("q=", ""))
                         this.referer = "$mainUrl/"
+                        this.headers = playlistHeaders
                     }
                 )
             }

@@ -437,6 +437,61 @@ suspend fun solveCloudflareInWebView(url: String): String? {
                 )
                 container.addView(wv)
 
+                val isTv = Globals.isLayout(2)
+                val cursorSize = (22 * dp).toInt()
+                if (isTv) {
+                    val cursorView = View(ctx).apply {
+                        layoutParams = FrameLayout.LayoutParams(cursorSize, cursorSize)
+                        val bg = GradientDrawable().apply {
+                            shape = GradientDrawable.OVAL
+                            setColor(Color.argb(160, 255, 50, 50))
+                            setStroke((2 * dp).toInt(), Color.WHITE)
+                        }
+                        setBackgroundDrawable(bg)
+                        elevation = 999f
+                        isFocusable = false
+                    }
+                    container.addView(cursorView)
+
+                    val cursorX = (metrics.x * 0.95f) / 2f
+                    val cursorY = (metrics.y * 0.9f) / 2f
+
+                    container.viewTreeObserver.addOnGlobalLayoutListener(object : ViewTreeObserver.OnGlobalLayoutListener {
+                        override fun onGlobalLayout() {
+                            container.viewTreeObserver.removeOnGlobalLayoutListener(this)
+                            cursorView.translationX = container.width / 2f - cursorSize / 2f
+                            cursorView.translationY = container.height / 2f - cursorSize / 2f
+                        }
+                    })
+
+                    var cx = cursorX
+                    var cy = cursorY
+                    container.setOnKeyListener { _, keyCode, event ->
+                        if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+                        val step = dp * 10f
+                        when (keyCode) {
+                            KeyEvent.KEYCODE_DPAD_UP -> cy = (cy - step).coerceIn(0f, container.height.toFloat())
+                            KeyEvent.KEYCODE_DPAD_DOWN -> cy = (cy + step).coerceIn(0f, container.height.toFloat())
+                            KeyEvent.KEYCODE_DPAD_LEFT -> cx = (cx - step).coerceIn(0f, container.width.toFloat())
+                            KeyEvent.KEYCODE_DPAD_RIGHT -> cx = (cx + step).coerceIn(0f, container.width.toFloat())
+                            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
+                                val t = SystemClock.uptimeMillis()
+                                val down = MotionEvent.obtain(t, t, MotionEvent.ACTION_DOWN, cx, cy, 0)
+                                val up = MotionEvent.obtain(t, t + 120, MotionEvent.ACTION_UP, cx, cy, 0)
+                                wv.dispatchTouchEvent(down)
+                                wv.dispatchTouchEvent(up)
+                                down.recycle()
+                                up.recycle()
+                                return@setOnKeyListener true
+                            }
+                            else -> return@setOnKeyListener false
+                        }
+                        cursorView.translationX = cx - cursorSize / 2f
+                        cursorView.translationY = cy - cursorSize / 2f
+                        true
+                    }
+                }
+
                 val dialog = AlertDialog.Builder(ctx)
                     .setView(wrapper)
                     .setCancelable(false)

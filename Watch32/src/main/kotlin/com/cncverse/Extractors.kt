@@ -1,14 +1,14 @@
 package com.cncverse
 
+import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.newSubtitleFile
+import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper.Companion.generateM3u8
-import com.fasterxml.jackson.annotation.JsonProperty
-import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import java.net.URLEncoder
 
 class Videostr : ExtractorApi() {
@@ -55,7 +55,7 @@ class Videostr : ExtractorApi() {
             parseJson<Megakey>(keyJson).vidstr
         } catch (e: Exception) {
             throw Exception("Failed to parse Megakey: ${e.message}")
-        } ?: throw Exception("Decryption key not found")
+        }
 
         val encodedSource = response.sources.firstOrNull()?.file
             ?: throw Exception("No sources found in response")
@@ -93,12 +93,7 @@ class Videostr : ExtractorApi() {
 
         response.tracks.forEach { track ->
             if (track.kind == "captions" || track.kind == "subtitles") {
-                subtitleCallback(
-                    newSubtitleFile(
-                        track.label,
-                        track.file
-                    )
-                )
+                subtitleCallback(newSubtitleFile(track.label, track.file))
             }
         }
     }
@@ -127,6 +122,6 @@ class Videostr : ExtractorApi() {
     data class Megakey(
         val rabbit: String,
         val mega: String,
-        val vidstr: String
+        val vidstr: String,
     )
 }

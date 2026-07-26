@@ -232,9 +232,10 @@ class PrimeVideoMirrorProvider : MainAPI() {
     ): Boolean {
         val apiBase = resolveApiUrl()
         val id = parseJson<LoadData>(data).id
+        val userToken = getNewTvUserToken(apiBase, "pv")
         val response = app.get(
             "$apiBase/newtv/player.php?id=$id",
-            headers = buildNewTvHeaders("pv", mapOf("Usertoken" to ""))
+            headers = buildNewTvHeaders("pv", mapOf("Usertoken" to userToken))
         ).parsed<NewTvPlayerResponse>()
 
         if (response.status != "ok" || response.video_link.isNullOrBlank()) return false

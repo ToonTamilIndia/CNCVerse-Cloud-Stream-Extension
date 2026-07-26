@@ -1,5 +1,6 @@
 package com.anikoto
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
@@ -45,8 +46,7 @@ class AnikotoProvider : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val url = "${request.data}?page=$page"
-        val doc = app.get(url, headers = browserHeaders).document
+        val doc = app.get("${request.data}?page=$page", headers = browserHeaders).document
         val items = doc.select("div.item, div.flw-item").mapNotNull { it.toSearchResult() }
         return newHomePageResponse(request.name, items)
     }
@@ -80,7 +80,6 @@ class AnikotoProvider : MainAPI() {
         val isMovie = doc.selectFirst("#w-info a[href*='/type/movie']") != null
             || doc.selectFirst(".bmeta")?.text()?.contains("Movie", ignoreCase = true) == true
 
-        // Anime ID from watch-main or data-id attribute
         val animeId = doc.selectFirst("#watch-main")?.attr("data-id")
             ?: doc.selectFirst("[data-id]")?.attr("data-id")
             ?: Regex("""data-id=["'](\d+)["']""").find(doc.html())?.groupValues?.get(1)
@@ -158,33 +157,137 @@ class AnikotoProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val parts = data.split("|")
-        if (parts.size < 4) return false
+        if (data.startsWith("anikoto|")) {
+            val parts = data.split("|")
+            if (parts.size >= 4) {
+                val animeUrl = parts[1]
+                val serverIds = parts[2]
+                val audioType = parts[3]
+                val isSub = audioType == "sub"
+                val preferredTypes = if (isSub) {
+                    listOf("sub", "hsub", "h-sub", "raw")
+                } else {
+                    listOf("dub", "adub", "a-dub")
+                }
 
-        val animeUrl = parts[1]
-        val serverIds = parts[2]
-        val audioType = parts[3]
-        val isSub = audioType == "sub"
-        val preferredTypes = if (isSub) {
+                try {
+                    val serverListText = app.get(
+                        "$mainUrl/ajax/server/list?servers=$serverIds",
+                        headers = ajaxHeaders("$animeUrl/")
+                    ).text
+                    val serverListHtml = jsonResultString(serverListText)
+                    val serverListSoup = Jsoup.parse(serverListHtml)
+
+                    val linkIds = mutableListOf<Pair<String, String>>()
+                    serverListSoup.select(".server-type").forEach { st ->
+                        val typeAttr = st.attr("data-type")
+                        if (typeAttr in preferredTypes) {
+                            st.select(".server").forEach { s ->
+                                val linkId = s.attr("data-link-id").takeIf { it.isNotBlank() }
+                                    ?: return@forEach
+                                val serverName = s.selectFirst("span")?.text()?.trim()
+                                    ?: "Server"
+                                linkIds.add(serverName to linkId)
+                            }
+                        }
+                    }
+
+                    if (linkIds.isNotEmpty()) {
+                        var found = false
+                        for ((_, linkId) in linkIds) {
+                            try {
+                                val serverText = app.get(
+                                    "$mainUrl/ajax/server?get=$linkId",
+                                    headers = ajaxHeaders("$animeUrl/")
+                                ).text
+                                val serverJson = parseJson<ServerInfoResponse>(serverText)
+                                val embedUrl =
+                                    serverJson.result?.url?.takeIf { it.isNotBlank() } ?: continue
+
+                                val loaded = resolveEmbedInline(
+                                    embedUrl,
+                                    "$animeUrl/",
+                                    audioType,
+                                    subtitleCallback,
+                                    callback
+                                )
+                                if (loaded) found = true
+                            } catch (_: Exception) {
+                            }
+                        }
+                        if (found) return true
+                    }
+                } catch (_: Exception) {
+                }
+
+                return resolveFromWatchPage(animeUrl, subtitleCallback, callback)
+            }
+        }
+        return resolveFromWatchPage(data, subtitleCallback, callback)
+    }
+
+    private suspend fun resolveFromWatchPage(
+        episodeUrl: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        val doc = try {
+            app.get(episodeUrl, headers = browserHeaders).document
+        } catch (_: Exception) {
+            return false
+        }
+
+        val watchMain = doc.selectFirst("#watch-main")
+        val animeId = watchMain?.attr("data-id")?.takeIf { it.isNotBlank() }
+            ?: doc.selectFirst("[data-id]")?.attr("data-id")
+            ?: Regex("""data-id=["'](\d+)["']""").find(doc.html())?.groupValues?.get(1)
+            ?: return false
+
+        val audioType = if (episodeUrl.contains("/dub/", ignoreCase = true)) "dub" else "sub"
+
+        val epListText = try {
+            app.get(
+                "$mainUrl/ajax/episode/list/$animeId",
+                headers = ajaxHeaders(episodeUrl),
+                referer = episodeUrl
+            ).text
+        } catch (_: Exception) {
+            return false
+        }
+        val epListHtml = jsonResultString(epListText)
+        val epDoc = Jsoup.parse(epListHtml)
+
+        val urlSuffix = episodeUrl.substringAfterLast("/")
+        val targetEp = epDoc.select("a[href*='$urlSuffix']").first()
+            ?: epDoc.select("a[href*='/ep-']").first()
+            ?: return false
+
+        val serverIds = targetEp.attr("data-ids").takeIf { it.isNotBlank() } ?: return false
+
+        val serverListText = try {
+            app.get(
+                "$mainUrl/ajax/server/list?servers=$serverIds",
+                headers = ajaxHeaders("$episodeUrl/")
+            ).text
+        } catch (_: Exception) {
+            return false
+        }
+        val serverListHtml = jsonResultString(serverListText)
+        val serverDoc = Jsoup.parse(serverListHtml)
+
+        val preferredTypes = if (audioType == "sub") {
             listOf("sub", "hsub", "h-sub", "raw")
         } else {
             listOf("dub", "adub", "a-dub")
         }
 
-        // Get server list
-        val serverListText = app.get(
-            "$mainUrl/ajax/server/list?servers=$serverIds",
-            headers = ajaxHeaders("$animeUrl/")
-        ).text
-        val serverListHtml = jsonResultString(serverListText)
-        val serverListSoup = Jsoup.parse(serverListHtml)
-
         val linkIds = mutableListOf<Pair<String, String>>()
-        serverListSoup.select(".server-type").forEach { st ->
+        serverDoc.select(".server-type").forEach { st ->
             val typeAttr = st.attr("data-type")
             if (typeAttr in preferredTypes) {
                 st.select(".server").forEach { s ->
-                    val linkId = s.attr("data-link-id").takeIf { it.isNotBlank() } ?: return@forEach
+                    val linkId = s.attr("data-link-id").takeIf { it.isNotBlank() }
+                        ?: return@forEach
                     val serverName = s.selectFirst("span")?.text()?.trim() ?: "Server"
                     linkIds.add(serverName to linkId)
                 }
@@ -194,16 +297,22 @@ class AnikotoProvider : MainAPI() {
         if (linkIds.isEmpty()) return false
 
         var found = false
-        for ((serverName, linkId) in linkIds) {
+        for ((_, linkId) in linkIds) {
             try {
                 val serverText = app.get(
                     "$mainUrl/ajax/server?get=$linkId",
-                    headers = ajaxHeaders("$animeUrl/")
+                    headers = ajaxHeaders("$episodeUrl/")
                 ).text
                 val serverJson = parseJson<ServerInfoResponse>(serverText)
                 val embedUrl = serverJson.result?.url?.takeIf { it.isNotBlank() } ?: continue
 
-                val loaded = resolveEmbedInline(embedUrl, "$animeUrl/", audioType, subtitleCallback, callback)
+                val loaded = resolveEmbedInline(
+                    embedUrl,
+                    "$episodeUrl/",
+                    audioType,
+                    subtitleCallback,
+                    callback
+                )
                 if (loaded) found = true
             } catch (_: Exception) {
             }
@@ -230,7 +339,14 @@ class AnikotoProvider : MainAPI() {
             domain.contains("vidtube", ignoreCase = true)
 
         if (isMegaPlayDomain) {
-            return resolveMegaPlayInline(normalizedUrl, referer, domain, audioType, subtitleCallback, callback)
+            return resolveMegaPlayInline(
+                normalizedUrl,
+                referer,
+                domain,
+                audioType,
+                subtitleCallback,
+                callback
+            )
         }
 
         return try {
@@ -286,15 +402,23 @@ class AnikotoProvider : MainAPI() {
         }
 
         val root = try {
-            parseJson<MegaPlaySourceResponse>(jsonText)
+            parseJson<SourcesResponse>(jsonText)
         } catch (_: Exception) {
             null
         } ?: return false
 
-        val m3u8 = root.sources?.file
+        val m3u8 = when (val s = root.sources) {
+            is Map<*, *> -> (s["file"] as? String)
+            else -> null
+        }
         if (m3u8.isNullOrBlank()) return false
 
-        val generated = M3u8Helper.generateM3u8(serverName, m3u8, host, headers = playbackHeaders)
+        val generated = M3u8Helper.generateM3u8(
+            serverName,
+            m3u8,
+            host,
+            headers = playbackHeaders
+        )
         if (generated.isNotEmpty()) {
             generated.forEach(callback)
         } else {
@@ -335,6 +459,17 @@ class AnikotoProvider : MainAPI() {
         }
     }
 
+    private fun jsonResultUrl(json: String): String? {
+        return try {
+            val response = parseJson<AjaxResponse>(json)
+            if (response.status == 200) {
+                (response.result as? Map<*, *>)?.get("url") as? String
+            } else null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private fun Element.toSearchResult(): SearchResponse? {
         var titleEl = selectFirst("a.name.d-title")
             ?: selectFirst("a[title]")
@@ -351,7 +486,6 @@ class AnikotoProvider : MainAPI() {
             ?: titleEl.attr("title").trim().takeIf { it.isNotBlank() }
             ?: return null
 
-        if (href.isBlank()) return null
         val cleanHref = fixUrl(Regex("/ep-\\d+$").replace(href, ""))
 
         val posterEl = selectFirst("div.poster img, img")
@@ -396,16 +530,14 @@ class AnikotoProvider : MainAPI() {
         @JsonProperty("url") val url: String? = null
     )
 
-    data class MegaPlaySourceResponse(
-        @JsonProperty("sources") val sources: MegaPlaySources? = null,
-        @JsonProperty("tracks") val tracks: List<MegaPlayTrack>? = null
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class SourcesResponse(
+        @JsonProperty("sources") val sources: Any? = null,
+        @JsonProperty("tracks") val tracks: List<Track>? = null
     )
 
-    data class MegaPlaySources(
-        @JsonProperty("file") val file: String? = null
-    )
-
-    data class MegaPlayTrack(
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class Track(
         @JsonProperty("file") val file: String? = null,
         @JsonProperty("label") val label: String? = null,
         @JsonProperty("kind") val kind: String? = null

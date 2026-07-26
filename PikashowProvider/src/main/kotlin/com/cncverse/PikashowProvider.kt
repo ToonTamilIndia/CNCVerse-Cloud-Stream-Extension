@@ -1,53 +1,37 @@
 ﻿package com.cncverse
 
-import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.utils.*
-import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
+import com.lagradost.cloudstream3.*
+import com.lagradost.cloudstream3.utils.*
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import org.json.JSONArray
+import org.jsoup.Jsoup
+import java.util.UUID
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
-import java.security.MessageDigest
-import java.util.*
-import java.util.Base64
-import java.nio.charset.StandardCharsets
-import org.jsoup.Jsoup
-import okio.GzipSource
-import org.json.JSONArray
-import android.content.Context
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import android.content.Intent
-import android.net.Uri
-import android.os.Handler
-import android.os.Looper
-import com.lagradost.cloudstream3.ui.settings.Globals.TV
-import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
 
 class PikashowProvider : MainAPI() {
     override var mainUrl = "https://manoda.co"
     override var name = "Pikashow"
     override val hasMainPage = true
     override var lang = "ta"
-    override val supportedTypes = setOf(
-        TvType.Movie,
-        TvType.TvSeries,
-    )
+    override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
 
     companion object {
-        var context: Context? = null
+        var context: android.content.Context? = null
     }
 
     private val apiKey = "picashow-api-secret-key"
     private val hmacSecret = "picashow-api-secret-2025"
     private val mapper = jacksonObjectMapper()
-    
-    // Generate realistic device identifiers
     private val deviceUuid = UUID.randomUUID().toString()
     private val gaid = UUID.randomUUID().toString()
+    private val userAgent = "Pikashow/2509030 (Android 13; Pixel 5; Channel/pikashow; gaid/$gaid); Uuid/$deviceUuid"
 
-    // For series response
+    // ── Data models ──────────────────────────────────────────────────────────
+
     data class PikashowSeries(
         @JsonProperty("t") val title: String? = null,
         @JsonProperty("g") val genre: String? = null,
@@ -68,7 +52,6 @@ class PikashowProvider : MainAPI() {
         @JsonProperty("series") val series: List<PikashowSeries>? = null
     )
 
-    // For movies response (bollywood/hollywood)
     data class PikashowMovie(
         @JsonProperty("so") val sortOrder: Int? = null,
         @JsonProperty("t") val title: String? = null,
@@ -90,7 +73,6 @@ class PikashowProvider : MainAPI() {
         @JsonProperty("records") val records: List<PikashowMovie>? = null
     )
 
-    // For video API response
     data class VideoApiResponse(
         @JsonProperty("code") val code: Int? = null,
         @JsonProperty("message") val message: String? = null,
@@ -153,7 +135,6 @@ class PikashowProvider : MainAPI() {
         @JsonProperty("resolutions") val resolutions: List<Resolution>? = null
     )
 
-    // Data classes for HDBV player parsing
     data class Keys(
         @JsonProperty("file") val file: String,
         @JsonProperty("key") val key: String
@@ -173,21 +154,16 @@ class PikashowProvider : MainAPI() {
         @JsonProperty("file") val file: String
     )
 
+    // ── Signature & headers ─────────────────────────────────────────────────
+
     private fun generateSignature(timestampMs: Long? = null): Map<String, String> {
         val timestamp = timestampMs ?: System.currentTimeMillis()
-        val timestampSeconds = timestamp / 1000
-        val timestampStr = timestampSeconds.toString()
-
-        // Construct message: API_KEY + ":" + TIMESTAMP
+        val timestampStr = (timestamp / 1000).toString()
         val message = "$apiKey:$timestampStr"
-
-        // Generate HMAC-SHA256 signature
         val mac = Mac.getInstance("HmacSHA256")
-        val secretKey = SecretKeySpec(hmacSecret.toByteArray(Charsets.UTF_8), "HmacSHA256")
-        mac.init(secretKey)
-        val signature = mac.doFinal(message.toByteArray(Charsets.UTF_8))
-        val signatureHex = signature.joinToString("") { "%02x".format(it) }
-
+        mac.init(SecretKeySpec(hmacSecret.toByteArray(Charsets.UTF_8), "HmacSHA256"))
+        val signatureHex = mac.doFinal(message.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
         return mapOf(
             "X-Timestamp" to timestampStr,
             "X-API-Key" to apiKey,
@@ -196,123 +172,21 @@ class PikashowProvider : MainAPI() {
     }
 
     private fun getPikashowHeaders(): Map<String, String> {
-        val sigHeaders = generateSignature()
+        val sig = generateSignature()
         return mapOf(
             "Host" to "manoda.co",
-            "user-agent" to "Pikashow/2509030 (Android 13; Pixel 5; Channel/pikashow; gaid/$gaid); Uuid/$deviceUuid",
-            "X-API-Key" to sigHeaders["X-API-Key"]!!,
-            "X-Signature" to sigHeaders["X-Signature"]!!,
-            "X-Timestamp" to sigHeaders["X-Timestamp"]!!
+            "user-agent" to userAgent,
+            "X-API-Key" to sig["X-API-Key"]!!,
+            "X-Signature" to sig["X-Signature"]!!,
+            "X-Timestamp" to sig["X-Timestamp"]!!
         )
     }
 
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        
-        val headers = getPikashowHeaders()
-        val homePageList = mutableListOf<HomePageList>()
-
-        try {
-            // Fetch different categories
-            val categories = listOf(
-                "series" to "TV Series",
-                "hollywood" to "Hollywood Movies",
-                "bollywood" to "Bollywood Movies"
-            )
-
-            categories.forEach { (type, displayName) ->
-                try {
-                    val url = "$mainUrl/v1/api/videos"
-                    val params = mapOf(
-                        "type" to type,
-                        "channel" to "pikashow"
-                    )
-
-                    val response = app.get(
-                        url = url,
-                        params = params,
-                        headers = headers,
-                        timeout = 30
-                    )
-
-                    if (response.code == 200) {
-                        val searchResults = when (type) {
-                            "series" -> {
-                                try {
-                                    val seriesResponse = mapper.readValue<PikashowSeriesResponse>(response.text)
-                                    seriesResponse.series?.mapNotNull { series ->
-                                        series.title?.let { title ->
-                                            newTvSeriesSearchResponse(
-                                                name = title,
-                                                url = "pikashow:${title}:$type",
-                                                type = TvType.TvSeries
-                                            ) {
-                                                this.posterUrl = series.cover
-                                                this.year = series.year
-                                                this.quality = SearchQuality.HD // Default for series
-                                            }
-                                        }
-                                    }?.asReversed() ?: emptyList() // show last response first
-                                } catch (e: Exception) {
-                                    println("Error parsing series response: ${e.message}")
-                                    emptyList()
-                                }
-                            }
-                            "hollywood", "bollywood" -> {
-                                try {
-                                    val movieResponse = mapper.readValue<PikashowMovieResponse>(response.text)
-                                    movieResponse.records?.mapNotNull { movie ->
-                                        movie.title?.let { title ->
-                                            newMovieSearchResponse(
-                                                name = title,
-                                                url = "pikashow:${movie.sortOrder}:$type",
-                                                type = TvType.Movie
-                                            ) {
-                                                this.posterUrl = movie.cover
-                                                this.year = movie.year
-                                                this.quality = getQualityFromString(movie.quality)
-                                            }
-                                        }
-                                    }?.asReversed() ?: emptyList() // show last response first
-                                } catch (e: Exception) {
-                                    println("Error parsing movie response: ${e.message}")
-                                    emptyList()
-                                }
-                            }
-                            else -> emptyList()
-                        }
-
-                        if (searchResults.isNotEmpty()) {
-                            homePageList.add(HomePageList(displayName, searchResults))
-                        }
-                    }
-                } catch (e: Exception) {
-                    // Continue with other categories if one fails
-                    println("Failed to fetch $displayName: ${e.message}")
-                }
-            }
-        } catch (e: Exception) {
-            println("Error in getMainPage: ${e.message}")
-            // Add fallback content
-            val fallbackList = listOf(
-                newMovieSearchResponse(
-                    name = "Pikashow Service",
-                    url = "error",
-                    type = TvType.Movie
-                ) {
-                    this.posterUrl = null
-                }
-            )
-            homePageList.add(HomePageList("Status", fallbackList))
-        }
-
-        return newHomePageResponse(homePageList)
-    }
+    // ── Quality helpers ─────────────────────────────────────────────────────
 
     private fun getQualityFromString(qualityString: String?): SearchQuality? {
         return when (qualityString?.uppercase()) {
-            "HD", "720P" -> SearchQuality.HD
-            "FHD", "1080P" -> SearchQuality.HD
-            "4K", "2160P" -> SearchQuality.HD
+            "HD", "720P", "FHD", "1080P", "4K", "2160P" -> SearchQuality.HD
             "CAM", "CAMRIP" -> SearchQuality.Cam
             "HDCAM" -> SearchQuality.HdCam
             "TELECINE", "TC" -> SearchQuality.Telecine
@@ -322,231 +196,224 @@ class PikashowProvider : MainAPI() {
         }
     }
 
+    private fun getQualityValue(qualityString: String?): Int {
+        return when (qualityString?.uppercase()) {
+            "4K", "2160P" -> Qualities.P2160.value
+            "FHD", "1080P" -> Qualities.P1080.value
+            "HD", "720P" -> Qualities.P720.value
+            "SD", "480P" -> Qualities.P480.value
+            else -> Qualities.Unknown.value
+        }
+    }
+
+    private fun getQualityValueFromLabel(label: String?): Int {
+        return when (label?.lowercase()) {
+            "1080p" -> Qualities.P1080.value
+            "720p" -> Qualities.P720.value
+            "480p" -> Qualities.P480.value
+            "360p" -> Qualities.P360.value
+            "default" -> Qualities.P720.value
+            else -> Qualities.Unknown.value
+        }
+    }
+
+    // ── getMainPage ─────────────────────────────────────────────────────────
+
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        val headers = getPikashowHeaders()
+        val homePageList = mutableListOf<HomePageList>()
+
+        val categories = listOf(
+            "series" to "TV Series",
+            "hollywood" to "Hollywood Movies",
+            "bollywood" to "Bollywood Movies"
+        )
+
+        for ((type, displayName) in categories) {
+            try {
+                val params = mapOf("type" to type, "channel" to "pikashow")
+                val response = app.get("$mainUrl/v1/api/videos", params = params, headers = headers, timeout = 30)
+                if (response.code != 200) continue
+
+                val searchResults = when (type) {
+                    "series" -> {
+                        val seriesResponse = mapper.readValue<PikashowSeriesResponse>(response.text)
+                        seriesResponse.series?.mapNotNull { series ->
+                            series.title?.let { title ->
+                                newTvSeriesSearchResponse(title, "pikashow:$title:$type", TvType.TvSeries) {
+                                    posterUrl = series.cover
+                                    year = series.year
+                                    quality = SearchQuality.HD
+                                }
+                            }
+                        }?.asReversed() ?: emptyList()
+                    }
+                    "hollywood", "bollywood" -> {
+                        val movieResponse = mapper.readValue<PikashowMovieResponse>(response.text)
+                        movieResponse.records?.mapNotNull { movie ->
+                            movie.title?.let { title ->
+                                newMovieSearchResponse(title, "pikashow:${movie.sortOrder}:$type", TvType.Movie) {
+                                    posterUrl = movie.cover
+                                    year = movie.year
+                                    quality = getQualityFromString(movie.quality)
+                                }
+                            }
+                        }?.asReversed() ?: emptyList()
+                    }
+                    else -> emptyList()
+                }
+
+                if (searchResults.isNotEmpty()) {
+                    homePageList.add(HomePageList(displayName, searchResults))
+                }
+            } catch (_: Exception) { }
+        }
+
+        return newHomePageResponse(homePageList)
+    }
+
+    // ── search ──────────────────────────────────────────────────────────────
+
     override suspend fun search(query: String): List<SearchResponse> {
-        
         if (query.isBlank()) return emptyList()
-        
         val searchResults = mutableListOf<SearchResponse>()
         val headers = getPikashowHeaders()
         val searchQuery = query.lowercase().trim()
-        
-        try {
-            // Search in all three categories
-            val categories = listOf(
-                "series" to TvType.TvSeries,
-                "hollywood" to TvType.Movie,
-                "bollywood" to TvType.Movie
-            )
-            
-            categories.forEach { (type, tvType) ->
-                try {
-                    val url = "$mainUrl/v1/api/videos"
-                    val params = mapOf(
-                        "type" to type,
-                        "channel" to "pikashow"
-                    )
-                    
-                    val response = app.get(
-                        url = url,
-                        params = params,
-                        headers = headers,
-                        timeout = 30
-                    )
-                    
-                    if (response.code == 200) {
-                        when (type) {
-                            "series" -> {
-                                try {
-                                    val seriesResponse = mapper.readValue<PikashowSeriesResponse>(response.text)
-                                    seriesResponse.series?.forEach { series ->
-                                        series.title?.let { title ->
-                                            // Filter by search query
-                                            if (title.lowercase().contains(searchQuery) ||
-                                                series.genre?.lowercase()?.contains(searchQuery) == true) {
-                                                
-                                                searchResults.add(
-                                                    newTvSeriesSearchResponse(
-                                                        name = title,
-                                                        url = "pikashow:${title}:$type",
-                                                        type = tvType
-                                                    ) {
-                                                        this.posterUrl = series.cover
-                                                        this.year = series.year
-                                                        this.quality = SearchQuality.HD
-                                                    }
-                                                )
-                                            }
-                                        }
-                                    }
-                                } catch (e: Exception) {
-                                    println("Error parsing series search response: ${e.message}")
-                                }
-                            }
-                            
-                            "hollywood", "bollywood" -> {
-                                try {
-                                    val movieResponse = mapper.readValue<PikashowMovieResponse>(response.text)
-                                    movieResponse.records?.forEach { movie ->
-                                        movie.title?.let { title ->
-                                            // Filter by search query
-                                            if (title.lowercase().contains(searchQuery) ||
-                                                movie.genre?.lowercase()?.contains(searchQuery) == true) {
-                                                
-                                                searchResults.add(
-                                                    newMovieSearchResponse(
-                                                        name = title,
-                                                        url = "pikashow:${movie.sortOrder}:$type",
-                                                        type = tvType
-                                                    ) {
-                                                        this.posterUrl = movie.cover
-                                                        this.year = movie.year
-                                                        this.quality = getQualityFromString(movie.quality)
-                                                    }
-                                                )
-                                            }
-                                        }
-                                    }
-                                } catch (e: Exception) {
-                                    println("Error parsing movie search response: ${e.message}")
-                                }
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    println("Error searching in $type: ${e.message}")
-                }
-            }
-        } catch (e: Exception) {
-            println("Error in search function: ${e.message}")
-        }
-        
-        // Sort results to show best matches first
-        return searchResults.sortedWith(compareBy<SearchResponse> { searchResponse ->
-            val title = searchResponse.name.lowercase()
-            when {
-                // Exact match gets highest priority (0)
-                title == searchQuery -> 0
-                // Title starts with query gets second priority (1)
-                title.startsWith(searchQuery) -> 1
-                // Title contains query gets third priority (2)
-                title.contains(searchQuery) -> 2
-                // Other matches get lowest priority (3)
-                else -> 3
-            }
-        }.thenBy { it.name }).take(50)
-    }
 
-    override suspend fun load(url: String): LoadResponse? {
-        
-        try {
-            // Parse URL format: "pikashow:identifier:type"
-            val withoutUrlScheme = url.removePrefix("$mainUrl/")
-            val parts = withoutUrlScheme.split(":")
-            if (parts.size != 3 || parts[0] != "pikashow") return null
-            
-            val identifier = parts[1]
-            val type = parts[2]
-            
-            val headers = getPikashowHeaders()
-            
-            return when (type) {
-                "series" -> {
-                    // For series, we need to get episode details
-                    val seriesUrl = "$mainUrl/v1/api/videos"
-                    val params = mapOf(
-                        "type" to "series",
-                        "channel" to "pikashow"
-                    )
-                    
-                    val response = app.get(
-                        url = seriesUrl,
-                        params = params,
-                        headers = headers,
-                        timeout = 30
-                    )
-                    
-                    if (response.code == 200) {
+        val categories = listOf(
+            "series" to TvType.TvSeries,
+            "hollywood" to TvType.Movie,
+            "bollywood" to TvType.Movie
+        )
+
+        for ((type, tvType) in categories) {
+            try {
+                val params = mapOf("type" to type, "channel" to "pikashow")
+                val response = app.get("$mainUrl/v1/api/videos", params = params, headers = headers, timeout = 30)
+                if (response.code != 200) continue
+
+                when (type) {
+                    "series" -> {
                         val seriesResponse = mapper.readValue<PikashowSeriesResponse>(response.text)
-                        val series = seriesResponse.series?.find { it.title == identifier }
-                        
-                        series?.let { seriesData ->
-                            val episodes = mutableListOf<com.lagradost.cloudstream3.Episode>()
-                            
-                            // Generate episodes based on season details
-                            seriesData.details?.forEach { seasonDetail ->
-                                val seasonNumber = seasonDetail.season?.toIntOrNull() ?: 1
-                                val episodeCount = seasonDetail.episodesCount ?: 1
-                                
-                                for (episodeNum in 1..episodeCount) {
-                                    episodes.add(
-                                        newEpisode("pikashow_episode:${seriesData.title}:$seasonNumber:$episodeNum") {
-                                            this.name = "Episode $episodeNum"
-                                            this.season = seasonNumber
-                                            this.episode = episodeNum
+                        seriesResponse.series?.forEach { series ->
+                            series.title?.let { title ->
+                                if (title.lowercase().contains(searchQuery) ||
+                                    series.genre?.lowercase()?.contains(searchQuery) == true
+                                ) {
+                                    searchResults.add(
+                                        newTvSeriesSearchResponse(title, "pikashow:$title:$type", tvType) {
+                                            posterUrl = series.cover
+                                            year = series.year
+                                            quality = SearchQuality.HD
                                         }
                                     )
                                 }
                             }
-                            
-                            newTvSeriesLoadResponse(
-                                name = seriesData.title ?: "Unknown Series",
-                                url = url,
-                                type = TvType.TvSeries,
-                                episodes = episodes
-                            ) {
-                                this.posterUrl = seriesData.cover
-                                this.year = seriesData.year
-                                this.plot = seriesData.genre
-                                this.recommendations = emptyList()
-                                this.tags = seriesData.genre?.split(",")?.map { it.trim() }
-                            }
                         }
-                    } else null
-                }
-                
-                "hollywood", "bollywood" -> {
-                    // For movies, get movie details
-                    val movieUrl = "$mainUrl/v1/api/videos"
-                    val params = mapOf(
-                        "type" to type,
-                        "channel" to "pikashow"
-                    )
-                    
-                    val response = app.get(
-                        url = movieUrl,
-                        params = params,
-                        headers = headers,
-                        timeout = 30
-                    )
-                    
-                    if (response.code == 200) {
+                    }
+                    "hollywood", "bollywood" -> {
                         val movieResponse = mapper.readValue<PikashowMovieResponse>(response.text)
-                        val movie = movieResponse.records?.find { it.sortOrder.toString() == identifier }
-                        
-                        movie?.let { movieData ->
-                            newMovieLoadResponse(
-                                name = movieData.title ?: "Unknown Movie",
-                                url = url,
-                                type = TvType.Movie,
-                                dataUrl = url // Use the same URL for loadLinks
-                            ) {
-                                this.posterUrl = movieData.cover
-                                this.year = movieData.year
-                                this.plot = movieData.genre
-                                this.tags = movieData.genre?.split(",")?.map { it.trim() }
-                                this.recommendations = emptyList()
+                        movieResponse.records?.forEach { movie ->
+                            movie.title?.let { title ->
+                                if (title.lowercase().contains(searchQuery) ||
+                                    movie.genre?.lowercase()?.contains(searchQuery) == true
+                                ) {
+                                    searchResults.add(
+                                        newMovieSearchResponse(title, "pikashow:${movie.sortOrder}:$type", tvType) {
+                                            posterUrl = movie.cover
+                                            year = movie.year
+                                            quality = getQualityFromString(movie.quality)
+                                        }
+                                    )
+                                }
                             }
                         }
-                    } else null
+                    }
                 }
-                
+            } catch (_: Exception) { }
+        }
+
+        return searchResults.sortedWith(
+            compareBy<SearchResponse> { response ->
+                val title = response.name.lowercase()
+                when {
+                    title == searchQuery -> 0
+                    title.startsWith(searchQuery) -> 1
+                    title.contains(searchQuery) -> 2
+                    else -> 3
+                }
+            }.thenBy { it.name }
+        ).take(50)
+    }
+
+    // ── load ────────────────────────────────────────────────────────────────
+
+    override suspend fun load(url: String): LoadResponse? {
+        try {
+            val withoutUrlScheme = url.removePrefix("$mainUrl/")
+            val parts = withoutUrlScheme.split(":")
+            if (parts.size != 3 || parts[0] != "pikashow") return null
+
+            val identifier = parts[1]
+            val type = parts[2]
+            val headers = getPikashowHeaders()
+            val baseParams = mapOf("type" to type, "channel" to "pikashow")
+            val response = app.get("$mainUrl/v1/api/videos", params = baseParams, headers = headers, timeout = 30)
+            if (response.code != 200) return null
+
+            return when (type) {
+                "series" -> {
+                    val seriesResponse = mapper.readValue<PikashowSeriesResponse>(response.text)
+                    val series = seriesResponse.series?.find { it.title == identifier } ?: return null
+                    val episodes = mutableListOf<Episode>()
+                    series.details?.forEach { detail ->
+                        val seasonNumber = detail.season?.toIntOrNull() ?: 1
+                        val episodeCount = detail.episodesCount ?: 1
+                        for (episodeNum in 1..episodeCount) {
+                            episodes.add(
+                                newEpisode("pikashow_episode:${series.title}:$seasonNumber:$episodeNum") {
+                                    name = "Episode $episodeNum"
+                                    season = seasonNumber
+                                    episode = episodeNum
+                                }
+                            )
+                        }
+                    }
+                    newTvSeriesLoadResponse(
+                        name = series.title ?: "Unknown Series",
+                        url = url,
+                        type = TvType.TvSeries,
+                        episodes = episodes
+                    ) {
+                        posterUrl = series.cover
+                        year = series.year
+                        plot = series.genre
+                        tags = series.genre?.split(",")?.map { it.trim() }
+                    }
+                }
+                "hollywood", "bollywood" -> {
+                    val movieResponse = mapper.readValue<PikashowMovieResponse>(response.text)
+                    val movie = movieResponse.records?.find { it.sortOrder.toString() == identifier } ?: return null
+                    newMovieLoadResponse(
+                        name = movie.title ?: "Unknown Movie",
+                        url = url,
+                        type = TvType.Movie,
+                        dataUrl = url
+                    ) {
+                        posterUrl = movie.cover
+                        year = movie.year
+                        plot = movie.genre
+                        tags = movie.genre?.split(",")?.map { it.trim() }
+                    }
+                }
                 else -> null
             }
-        } catch (e: Exception) {
-            println("Error in load function: ${e.message}")
+        } catch (_: Exception) {
             return null
         }
     }
+
+    // ── loadLinks ───────────────────────────────────────────────────────────
 
     override suspend fun loadLinks(
         data: String,
@@ -557,128 +424,90 @@ class PikashowProvider : MainAPI() {
         try {
             val withoutUrlScheme = data.removePrefix("$mainUrl/")
             val headers = getPikashowHeaders()
-            
-            // Parse different data formats
+
             when {
                 withoutUrlScheme.startsWith("pikashow_episode:") -> {
-                    // Handle episode links: "pikashow_episode:seriesTitle:season:episode"
                     val parts = withoutUrlScheme.split(":")
-                    if (parts.size >= 4) {
-                        val seriesTitle = parts[1]
-                        val season = parts[2]
-                        val episode = parts[3]
-                        
-                        // Get episode streaming URLs from video API
-                        val videoUrl = "$mainUrl/v1/api/video"
-                        val params = mapOf(
-                            "type" to "series",
-                            "videoId" to "0",
-                            "title" to seriesTitle,
-                            "noseasons" to season,
-                            "noepisodes" to episode
+                    if (parts.size < 4) return false
+                    val (_, seriesTitle, season, episode) = parts
+                    val params = mapOf(
+                        "type" to "series",
+                        "videoId" to "0",
+                        "title" to seriesTitle,
+                        "noseasons" to season,
+                        "noepisodes" to episode
+                    )
+                    val response = app.get("$mainUrl/v1/api/video", params = params, headers = headers, timeout = 30)
+                    if (response.code == 200) {
+                        val videoData = mapper.readValue<VideoApiResponse>(response.text).data
+                        if (videoData != null) {
+                            addVideoLinksToCallback(videoData, callback, "Episode $episode")
+                            return true
+                        }
+                    }
+                }
+
+                withoutUrlScheme.startsWith("pikashow:") -> {
+                    val parts = withoutUrlScheme.split(":")
+                    if (parts.size < 3) return false
+                    val identifier = parts[1]
+                    val type = parts[2]
+
+                    val listParams = mapOf("type" to type, "channel" to "pikashow")
+                    val listResponse = app.get("$mainUrl/v1/api/videos", params = listParams, headers = headers, timeout = 30)
+                    if (listResponse.code != 200) return false
+
+                    var videoId: String? = null
+                    var title: String? = null
+
+                    when (type) {
+                        "series" -> {
+                            val seriesResponse = mapper.readValue<PikashowSeriesResponse>(listResponse.text)
+                            val series = seriesResponse.series?.find { it.title == identifier }
+                            if (series != null) {
+                                videoId = "0"
+                                title = series.title
+                            }
+                        }
+                        "hollywood", "bollywood" -> {
+                            val movieResponse = mapper.readValue<PikashowMovieResponse>(listResponse.text)
+                            val movie = movieResponse.records?.find { it.sortOrder.toString() == identifier }
+                            if (movie != null) {
+                                videoId = movie.sortOrder.toString()
+                                title = movie.title
+                            }
+                        }
+                    }
+
+                    if (videoId != null && title != null) {
+                        val safeTitle = title
+                        val videoParams = mapOf(
+                            "type" to type,
+                            "videoId" to videoId,
+                            "title" to safeTitle,
+                            "noseasons" to "1",
+                            "noepisodes" to "0"
                         )
-                        
-                        val response = app.get(
-                            url = videoUrl,
-                            params = params,
-                            headers = headers,
-                            timeout = 30
-                        )
-                        
-                        if (response.code == 200) {
-                            val videoResponse = mapper.readValue<VideoApiResponse>(response.text)
-                            videoResponse.data?.let { videoData ->
-                                addVideoLinksToCallback(videoData, callback, "Episode $episode")
+                        val videoResponse = app.get("$mainUrl/v1/api/video", params = videoParams, headers = headers, timeout = 30)
+                        if (videoResponse.code != 404) {
+                            val videoApiResponse = mapper.readValue<VideoApiResponse>(videoResponse.text)
+                            videoApiResponse.data?.let { videoData ->
+                                addVideoLinksToCallback(videoData, callback, safeTitle)
                                 return true
                             }
                         }
                     }
                 }
-                
-                withoutUrlScheme.startsWith("pikashow:") -> {
-                    // Handle movie/series links: "pikashow:identifier:type"
-                    val parts = withoutUrlScheme.split(":")
-                    if (parts.size >= 3) {
-                        val identifier = parts[1]
-                        val type = parts[2]
-                        
-                        // First get the content details from the list API
-                        val listUrl = "$mainUrl/v1/api/videos"
-                        val listParams = mapOf(
-                            "type" to type,
-                            "channel" to "pikashow"
-                        )
-                        
-                        val listResponse = app.get(
-                            url = listUrl,
-                            params = listParams,
-                            headers = headers,
-                            timeout = 30
-                        )
-                        
-                        if (listResponse.code == 200) {
-                            var videoId: String? = null
-                            var title: String? = null
-                            
-                            when (type) {
-                                "series" -> {
-                                    val seriesResponse = mapper.readValue<PikashowSeriesResponse>(listResponse.text)
-                                    val series = seriesResponse.series?.find { it.title == identifier }
-                                    series?.let {
-                                        videoId = "0"
-                                        title = it.title
-                                    }
-                                }
-                                "hollywood", "bollywood" -> {
-                                    val movieResponse = mapper.readValue<PikashowMovieResponse>(listResponse.text)
-                                    val movie = movieResponse.records?.find { it.sortOrder.toString() == identifier }
-                                    movie?.let {
-                                        videoId = it.sortOrder.toString()
-                                        title = it.title
-                                    }
-                                }
-                            }
-                            
-                            // Now get streaming URLs from video API
-                            if (videoId != null && title != null) {
-                                // Capture a non-mutable local copy to avoid smart-cast / closure issues
-                                val safeTitle = title
-                                val videoUrl = "$mainUrl/v1/api/video"
-                                val videoParams = mapOf(
-                                    "type" to type,
-                                    "videoId" to videoId,
-                                    "title" to safeTitle,
-                                    "noseasons" to "1",
-                                    "noepisodes" to "0"
-                                )
-                                
-                                val videoResponse = app.get(
-                                    url = videoUrl,
-                                    params = videoParams,
-                                    headers = headers,
-                                )
-                                
-                                if (videoResponse.code != 404) {
-                                    val videoApiResponse = mapper.readValue<VideoApiResponse>(videoResponse.text)
-                                    val contentNameLocal = safeTitle
-                                    videoApiResponse.data?.let { videoData ->
-                                        addVideoLinksToCallback(videoData, callback, contentNameLocal)
-                                        return true
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
             }
-            
+
             return false
-        } catch (e: Exception) {
-            println("Error in loadLinks: ${e.message}")
+        } catch (_: Exception) {
             return false
         }
     }
-    
+
+    // ── addVideoLinksToCallback ─────────────────────────────────────────────
+
     private suspend fun addVideoLinksToCallback(
         videoData: VideoData,
         callback: (ExtractorLink) -> Unit,
@@ -688,65 +517,50 @@ class PikashowProvider : MainAPI() {
             "Referer" to "https://samui390dod.com/",
             "Origin" to "https://samui390dod.com"
         )
-        
-        // Add heastr and user agent from response if available
         videoData.heastr?.let { baseHeaders["heastr"] = it }
         videoData.uastr?.let { baseHeaders["user-agent"] = it }
-        videoData.uaStr?.let { baseHeaders["user-agent"] = it } // Also check uaStr variant
-        
-        // Parse headerStr if available (it's a JSON string of additional headers)
+        videoData.uaStr?.let { baseHeaders["user-agent"] = it }
+
         videoData.headerStr?.let { headerStr ->
             try {
-                val additionalHeaders = mapper.readValue<Map<String, String>>(headerStr)
-                baseHeaders.putAll(additionalHeaders)
-            } catch (e: Exception) {
-                println("Failed to parse headerStr: ${e.message}")
-            }
+                baseHeaders.putAll(mapper.readValue<Map<String, String>>(headerStr))
+            } catch (_: Exception) { }
         }
-        
-        // Merge with response headers, giving priority to response headers
+
         val finalHeaders = if (videoData.headers != null) {
             val merged = baseHeaders.toMutableMap()
             merged.putAll(videoData.headers)
-            // Ensure priority fields are still included even if response headers override
             videoData.heastr?.let { merged["heastr"] = it }
             videoData.uastr?.let { merged["user-agent"] = it }
             videoData.uaStr?.let { merged["user-agent"] = it }
-            merged.toMutableMap()
+            merged
         } else {
-            baseHeaders.toMutableMap()
+            baseHeaders
         }
-        
-        // Check if we have any resolutions to work with
+
         val hasResolutions = !videoData.resolutions.isNullOrEmpty()
-        val hasLanguageResolutions = videoData.languageOptions?.any { !it.resolutions.isNullOrEmpty() } == true ||
-                                   videoData.languages?.any { !it.resolutions.isNullOrEmpty() } == true
-        
+        val hasLanguageResolutions =
+            videoData.languageOptions?.any { !it.resolutions.isNullOrEmpty() } == true ||
+            videoData.languages?.any { !it.resolutions.isNullOrEmpty() } == true
+
         if (hasResolutions || hasLanguageResolutions) {
-            // Add resolutions from main data
             videoData.resolutions?.forEach { resolution ->
                 resolution.url?.let { url ->
                     val linkType = when {
-                    url.contains("m3u8") || videoData.sourceType == "hls" -> ExtractorLinkType.M3U8
-                    videoData.sourceType == "direct" -> ExtractorLinkType.VIDEO
-                    else -> ExtractorLinkType.VIDEO
-                }
-                    callback.invoke(
-                        newExtractorLink(
-                            name,
-                            "${resolution.label ?: "Unknown"} - $contentName",
-                            url,
-                            linkType
-                        ) {
-                            this.referer = "https://samui390dod.com/"
-                            this.quality = getQualityValueFromLabel(resolution.label)
-                            this.headers = finalHeaders
+                        url.contains("m3u8") || videoData.sourceType == "hls" -> ExtractorLinkType.M3U8
+                        videoData.sourceType == "direct" -> ExtractorLinkType.VIDEO
+                        else -> ExtractorLinkType.VIDEO
+                    }
+                    callback(
+                        newExtractorLink(name, "${resolution.label ?: "Unknown"} - $contentName", url, linkType) {
+                            referer = "https://samui390dod.com/"
+                            quality = getQualityValueFromLabel(resolution.label)
+                            headers = finalHeaders
                         }
                     )
                 }
             }
-            
-            // Add language options if available
+
             (videoData.languageOptions ?: videoData.languages)?.forEach { lang ->
                 lang.resolutions?.forEach { resolution ->
                     resolution.url?.let { url ->
@@ -755,62 +569,78 @@ class PikashowProvider : MainAPI() {
                             videoData.sourceType == "direct" -> ExtractorLinkType.VIDEO
                             else -> ExtractorLinkType.VIDEO
                         }
-                        val langName = if (lang.language.isNullOrBlank()) "Default" else lang.language
-                        callback.invoke(
-                            newExtractorLink(
-                                name,
-                                "${resolution.label ?: "Unknown"} ($langName) - $contentName",
-                                url,
-                                type = linkType
-                            ) {
-                                this.referer = "https://samui390dod.com/"
-                                this.quality = getQualityValueFromLabel(resolution.label)
-                                this.headers = finalHeaders
+                        val langName = lang.language.takeIf { !it.isNullOrBlank() } ?: "Default"
+                        callback(
+                            newExtractorLink(name, "${resolution.label ?: "Unknown"} ($langName) - $contentName", url, linkType) {
+                                referer = "https://samui390dod.com/"
+                                quality = getQualityValueFromLabel(resolution.label)
+                                headers = finalHeaders
                             }
                         )
                     }
                 }
             }
-        } else {
-            // Use URL-based HDBV player parsing when no resolutions are available
-            if (videoData.url != null) {
-                try {
-                    val streamingUrl = parseHDBVPlayerUrl(videoData.url)
-                    if (streamingUrl.isNotEmpty()) {
-                        val urlOrigin = videoData.url.substringBefore("/", "https://") + "://" + videoData.url.substringAfter("://").substringBefore("/") + "/"
-                        callback.invoke(
-                            newExtractorLink(
-                                name,
-                                "$contentName - HDBV",
-                                streamingUrl,
-                                type = ExtractorLinkType.M3U8
-                            ) {
-                                this.referer = urlOrigin
-                                this.quality = Qualities.P720.value
-                                this.headers = finalHeaders
-                            }
-                        )
-                    } else {
-                        // Fallback to direct URLs if HDBV parsing fails
-                        fallbackToDirectUrls(videoData, callback, contentName, finalHeaders)
-                    }
-                } catch (e: Exception) {
-                    println("Error parsing HDBV player URL: ${e.message}")
-                    // Fallback to direct URLs if HDBV parsing fails
+        } else if (videoData.url != null) {
+            try {
+                val streamingUrl = parseHDBVPlayerUrl(videoData.url)
+                if (streamingUrl.isNotEmpty()) {
+                    val urlOrigin = videoData.url
+                        .substringBefore("/", "https://") + "://" +
+                        videoData.url.substringAfter("://").substringBefore("/") + "/"
+                    callback(
+                        newExtractorLink(name, "$contentName - HDBV", streamingUrl, ExtractorLinkType.M3U8) {
+                            referer = urlOrigin
+                            quality = Qualities.P720.value
+                            headers = finalHeaders
+                        }
+                    )
+                } else {
                     fallbackToDirectUrls(videoData, callback, contentName, finalHeaders)
                 }
-            } else {
-                // Direct URL fallback
+            } catch (_: Exception) {
                 fallbackToDirectUrls(videoData, callback, contentName, finalHeaders)
             }
+        } else {
+            fallbackToDirectUrls(videoData, callback, contentName, finalHeaders)
         }
-        
-
     }
-    
+
+    // ── fallbackToDirectUrls ────────────────────────────────────────────────
+
+    private suspend fun fallbackToDirectUrls(
+        videoData: VideoData,
+        callback: (ExtractorLink) -> Unit,
+        contentName: String,
+        finalHeaders: Map<String, String>
+    ) {
+        val directUrl = videoData.playUrl ?: videoData.videoUrl ?: videoData.url
+        directUrl?.let { url ->
+            val quality = when {
+                videoData.quality?.lowercase()?.contains("1080") == true -> Qualities.P1080.value
+                videoData.quality?.lowercase()?.contains("hd") == true -> Qualities.P720.value
+                videoData.quality?.lowercase()?.contains("720") == true -> Qualities.P720.value
+                videoData.quality?.lowercase()?.contains("480") == true -> Qualities.P480.value
+                else -> Qualities.Unknown.value
+            }
+            val linkType = when {
+                url.contains("m3u8") || videoData.sourceType == "hls" -> ExtractorLinkType.M3U8
+                videoData.sourceType == "direct" -> ExtractorLinkType.VIDEO
+                else -> ExtractorLinkType.VIDEO
+            }
+            callback(
+                newExtractorLink(name, "$contentName - ${videoData.host ?: "Direct"}", url, linkType) {
+                    referer = "https://samui390dod.com/"
+                    this.quality = quality
+                    headers = finalHeaders
+                }
+            )
+        }
+    }
+
+    // ── parseHDBVPlayerUrl ──────────────────────────────────────────────────
+
     private suspend fun parseHDBVPlayerUrl(playerUrl: String): String {
         try {
-            // Use the playerUrl directly as the HDBV player link
             val response = app.get(
                 url = playerUrl,
                 headers = mapOf(
@@ -833,26 +663,19 @@ class PikashowProvider : MainAPI() {
                     "X-Requested-With" to "com.offshore.pikachu"
                 )
             )
-
             if (response.code != 200) return ""
-            
+
             val doc = Jsoup.parse(response.text)
             val scripts = doc.getElementsByTag("script")
-            
             if (scripts.size < 8) return ""
-            
-            val script = scripts[7].toString()
-            val regex = Regex("""HDVBPlayer\((.*?)\);""")
-            val matchResult = regex.find(script)
 
+            val matchResult = Regex("""HDVBPlayer\((.*?)\);""").find(scripts[7].toString())
             if (matchResult != null) {
-                val jsonInsideHDVBPlayer = matchResult.groupValues[1]
-                val fileKeys = mapper.readValue<Keys>(jsonInsideHDVBPlayer)
-
-                // Extract origin from the playerUrl
-                val origin = playerUrl.substringBefore("/", "https://") + "://" + playerUrl.substringAfter("://").substringBefore("/") + "/"
+                val fileKeys = mapper.readValue<Keys>(matchResult.groupValues[1])
+                val origin = playerUrl.substringBefore("/", "https://") + "://" +
+                    playerUrl.substringAfter("://").substringBefore("/") + "/"
                 val absoluteUrl = origin + fileKeys.file
-                val headers = mapOf(
+                val postHeaders = mapOf(
                     "Accept" to "*/*",
                     "Accept-Encoding" to "gzip, deflate, br",
                     "Accept-Language" to "en-US,en;q=0.9",
@@ -862,128 +685,30 @@ class PikashowProvider : MainAPI() {
                     "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36",
                     "X-Csrf-Token" to fileKeys.key
                 )
-
-                val referer = playerUrl
-                val postResponse = app.post(
-                    url = absoluteUrl,
-                    headers = headers,
-                    referer = referer
-                )
-
+                val postResponse = app.post(url = absoluteUrl, headers = postHeaders, referer = playerUrl)
                 if (postResponse.code == 200) {
-                    // Handle gzipped response
-                    val responseText = if (postResponse.headers["Content-Encoding"] == "gzip") {
-                        // For CloudStream3, the response should already be decompressed
-                        postResponse.text
-                    } else {
-                        postResponse.text
-                    }
-
-                    val jsonArray = JSONArray(responseText)
+                    val jsonArray = JSONArray(postResponse.text)
                     val seasons = mutableListOf<Season>()
-                    
                     for (i in 0 until jsonArray.length()) {
                         val jsonObject = jsonArray.getJSONObject(i).toString()
-                        val seasonData = mapper.readValue<Season>(jsonObject.replace("[]", ""))
-                        seasons.add(seasonData)
+                        seasons.add(mapper.readValue(jsonObject.replace("[]", "")))
                     }
-
-                    // For movies, typically use first season and first episode
                     val episodeDetails = seasons.firstOrNull() ?: return ""
-                    val episode = episodeDetails.folder.firstOrNull()?.folder?.firstOrNull()?.file?.replace("~", "") ?: return ""
+                    val episode = episodeDetails.folder.firstOrNull()
+                        ?.folder?.firstOrNull()
+                        ?.file?.replace("~", "") ?: return ""
 
                     val playlistResponse = app.post(
                         url = "${origin}playlist/$episode.txt",
-                        headers = headers,
-                        referer = referer
+                        headers = postHeaders,
+                        referer = playerUrl
                     )
-
                     return if (playlistResponse.code == 200) {
                         playlistResponse.text.trim()
-                    } else {
-                        ""
-                    }
+                    } else ""
                 }
             }
-        } catch (e: Exception) {
-            println("Error parsing HDBV player URL: ${e.message}")
-        }
-        
+        } catch (_: Exception) { }
         return ""
     }
-    
-    private fun extractImdbIdFromUrl(url: String): String {
-        // Extract a unique identifier from the URL
-        // This could be an IMDB ID, or any other unique identifier in the URL
-        // For now, using a hash of the URL as identifier
-        return try {
-            val hash = MessageDigest.getInstance("MD5").digest(url.toByteArray())
-            hash.joinToString("") { "%02x".format(it) }.take(10)
-        } catch (e: Exception) {
-            "default"
-        }
-    }
-    
-    private suspend fun fallbackToDirectUrls(
-        videoData: VideoData,
-        callback: (ExtractorLink) -> Unit,
-        contentName: String,
-        finalHeaders: Map<String, String>
-    ) {
-        val directUrl = videoData.playUrl ?: videoData.videoUrl ?: videoData.url
-        directUrl?.let { url ->
-            // Determine quality based on source type or host
-            val quality = when {
-                videoData.quality?.lowercase()?.contains("hd") == true -> Qualities.P720.value
-                videoData.quality?.lowercase()?.contains("1080") == true -> Qualities.P1080.value
-                videoData.quality?.lowercase()?.contains("720") == true -> Qualities.P720.value
-                videoData.quality?.lowercase()?.contains("480") == true -> Qualities.P480.value
-                else -> Qualities.Unknown.value
-            }
-            
-            // Determine link type based on URL extension or source type
-            val linkType = when {
-                url.contains("m3u8") || videoData.sourceType == "hls" -> ExtractorLinkType.M3U8
-                videoData.sourceType == "direct" -> ExtractorLinkType.VIDEO
-                else -> ExtractorLinkType.VIDEO
-            }
-            
-            callback.invoke(
-                newExtractorLink(
-                    name,
-                    "$contentName - ${videoData.host ?: "Direct"}",
-                    url,
-                    type = linkType
-                ) {
-                    this.referer = "https://samui390dod.com/"
-                    this.quality = quality
-                    this.headers = finalHeaders
-                }
-            )
-        }
-    }
-    
-    private fun getQualityValue(qualityString: String?): Int {
-        return when (qualityString?.uppercase()) {
-            "4K", "2160P" -> Qualities.P2160.value
-            "FHD", "1080P" -> Qualities.P1080.value
-            "HD", "720P" -> Qualities.P720.value
-            "SD", "480P" -> Qualities.P480.value
-            else -> Qualities.Unknown.value
-        }
-    }
-    
-    private fun getQualityValueFromLabel(label: String?): Int {
-        return when (label?.lowercase()) {
-            "1080p" -> Qualities.P1080.value
-            "720p" -> Qualities.P720.value
-            "480p" -> Qualities.P480.value
-            "360p" -> Qualities.P360.value
-            "default" -> Qualities.P720.value
-            else -> Qualities.Unknown.value
-        }
-    }
-
-
-
 }

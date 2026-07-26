@@ -18,6 +18,33 @@ import org.json.JSONObject
 import java.util.UUID
 import okhttp3.Request
 import java.util.Base64
+import android.app.AlertDialog
+import android.content.DialogInterface
+import android.graphics.Color
+import android.graphics.Point
+import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.GradientDrawable
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
+import android.view.KeyEvent
+import android.view.MotionEvent
+import android.view.View
+import android.view.ViewTreeObserver
+import android.view.WindowManager
+import android.webkit.CookieManager
+import android.webkit.WebChromeClient
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.TextView
+import com.lagradost.cloudstream3.ui.settings.Globals
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 
 val JSONParser = object : ResponseParser {
     val mapper: ObjectMapper = jacksonObjectMapper().configure(
@@ -225,3 +252,223 @@ data class NewTvPlayerResponse(
     val video_link: String? = null,
     val referer: String? = null
 )
+
+const val NETMIRROR_TV_URL = "https://netmirror.gg/tv"
+
+private fun fetchNetmirrorTvHtmlBuildHeaders(cfClearance: String?): Map<String, String> {
+    val headers = mutableMapOf(
+        "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language" to "en-US,en;q=0.9"
+    )
+    if (!cfClearance.isNullOrEmpty()) {
+        headers["Cookie"] = "cf_clearance=$cfClearance"
+    }
+    return headers
+}
+
+private fun fetchNetmirrorTvHtmlIsCloudflare(html: String, statusCode: Int): Boolean {
+    if (statusCode == 403 || statusCode == 503) return true
+    return html.contains("netmirror.gg/tv", ignoreCase = true) &&
+        (html.contains("cf-browser-verification", ignoreCase = true) ||
+         html.contains("Checking if the site connection is secure", ignoreCase = true) ||
+         html.contains("Just a moment", ignoreCase = true) ||
+         html.contains("cloudflare", ignoreCase = true))
+}
+
+suspend fun fetchNetmirrorTvHtml(): String {
+    val (savedCf, savedCfTs) = NetflixMirrorStorage.getCfCookie()
+    val cfCookieToUse = if (!savedCf.isNullOrEmpty() && System.currentTimeMillis() - savedCfTs < 82800000) savedCf else null
+    try {
+        val firstResponse = app.get(NETMIRROR_TV_URL, fetchNetmirrorTvHtmlBuildHeaders(cfCookieToUse))
+        if (!fetchNetmirrorTvHtmlIsCloudflare(firstResponse.text, firstResponse.code)) {
+            return firstResponse.text
+        }
+        val cfClearance = solveCloudflareInWebView(NETMIRROR_TV_URL)
+        if (cfClearance.isNullOrEmpty()) return firstResponse.text
+        NetflixMirrorStorage.saveCfCookie(cfClearance)
+        return try {
+            app.get(NETMIRROR_TV_URL, fetchNetmirrorTvHtmlBuildHeaders(cfClearance)).text
+        } catch (e: Exception) {
+            firstResponse.text
+        }
+    } catch (e: Exception) {
+        return ""
+    }
+}
+
+suspend fun getNewTvUserToken(apiBase: String, ott: String, forceRefresh: Boolean = false): String {
+    val (savedToken, savedTimestamp) = NetflixMirrorStorage.getUserToken(ott)
+    if (!forceRefresh && !savedToken.isNullOrEmpty()) return savedToken
+
+    var currentOtp = NetflixMirrorStorage.getOtp() ?: "109400"
+    val otpHeaders = mutableMapOf(
+        "accept" to "application/json, text/plain, */*",
+        "cache-control" to "no-cache, no-store, must-revalidate",
+        "Connection" to "Keep-Alive",
+        "expires" to "0",
+        "otp" to currentOtp,
+        "pragma" to "no-cache",
+        "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.Gatu v1.0"
+    )
+
+    val otpResponse = try {
+        app.get("$apiBase/newtv/otp.php", otpHeaders).parsedSafe<NewTvOtpResponse>()
+    } catch (e: Exception) {
+        null
+    }
+
+    if (otpResponse?.status == "error" && otpResponse.error_msg == "Invalid OTP, Please Enter Valid OTP") {
+        val tvHtml = fetchNetmirrorTvHtml()
+        val otpMatch = Regex("""(?m)^\s*const\s+otp\s*=\s*\[(.*?)]""").find(tvHtml)
+        if (otpMatch != null) {
+            val newOtp = Regex("""\s*,\s*""").replace(otpMatch.groupValues[1], "").replace(" ", "")
+            if (newOtp.isNotEmpty()) {
+                currentOtp = newOtp
+                NetflixMirrorStorage.saveOtp(currentOtp)
+                otpHeaders["otp"] = currentOtp
+                val retryResponse = try {
+                    app.get("$apiBase/newtv/otp.php", otpHeaders).parsedSafe<NewTvOtpResponse>()
+                } catch (e: Exception) {
+                    null
+                }
+                val newToken = retryResponse?.usertoken.orEmpty()
+                if (newToken.isNotEmpty()) {
+                    NetflixMirrorStorage.saveUserToken(ott, newToken)
+                }
+                return newToken
+            }
+        }
+    }
+    val newToken = otpResponse?.usertoken.orEmpty()
+    if (newToken.isNotEmpty()) {
+        NetflixMirrorStorage.saveUserToken(ott, newToken)
+    }
+    return newToken
+}
+
+suspend fun solveCloudflareInWebView(url: String): String? {
+    val ctx = NetflixMirrorProvider.context ?: return null
+    return withContext(Dispatchers.Main) {
+        suspendCancellableCoroutine { cont ->
+            try {
+                val cookieManager = CookieManager.getInstance()
+                cookieManager.setAcceptCookie(true)
+                val wv = WebView(ctx)
+                cookieManager.setAcceptThirdPartyCookies(wv, true)
+                val ws = wv.settings
+                ws.javaScriptEnabled = true
+                ws.domStorageEnabled = true
+                ws.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                ws.userAgentString = "Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+                ws.mediaPlaybackRequiresUserGesture = false
+                wv.webChromeClient = WebChromeClient()
+
+                var resolved = false
+                fun extractAndFinish() {
+                    if (resolved) return
+                    val cookies = cookieManager.getCookie(url) ?: ""
+                    val match = Regex("""cf_clearance=([^;]+)""").find(cookies)
+                    val cf = match?.groupValues?.get(1)
+                    if (!cf.isNullOrEmpty()) {
+                        resolved = true
+                        try { wv.destroy() } catch (_: Exception) {}
+                        try {
+                            val tag = wv.tag
+                            if (tag is android.app.Dialog) tag.dismiss()
+                        } catch (_: Exception) {}
+                        cont.resume(cf)
+                    }
+                }
+
+                wv.webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(view: WebView?, url: String?) {
+                        super.onPageFinished(view, url)
+                        extractAndFinish()
+                        if (!resolved) {
+                            val handler = Handler(Looper.getMainLooper())
+                            handler.postDelayed(object : Runnable {
+                                override fun run() {
+                                    if (!resolved) {
+                                        extractAndFinish()
+                                        if (!resolved) {
+                                            handler.postDelayed(this, 1000L)
+                                        }
+                                    }
+                                }
+                            }, 1000L)
+                        }
+                    }
+                }
+
+                val dp = ctx.resources.displayMetrics.density
+                val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                val metrics = Point()
+                wm.defaultDisplay.getSize(metrics)
+                val params = WindowManager.LayoutParams(
+                    (metrics.x * 0.95f).toInt(),
+                    (metrics.y * 0.9f).toInt()
+                )
+                val wrapper = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+                val infoBar = TextView(ctx).apply {
+                    text = "Solve the Cloudflare captcha"
+                    setTextColor(Color.WHITE)
+                    setBackgroundColor(Color.parseColor("#1A1A2E"))
+                    textSize = 13f
+                    val p = (10 * dp).toInt()
+                    setPadding(p, p, p, p)
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    )
+                }
+                val container = FrameLayout(ctx).apply {
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        0,
+                        1f
+                    )
+                    isFocusable = true
+                    isFocusableInTouchMode = true
+                }
+                wv.layoutParams = FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT
+                )
+                container.addView(wv)
+
+                val dialog = AlertDialog.Builder(ctx)
+                    .setView(wrapper)
+                    .setCancelable(false)
+                    .create()
+                dialog.window?.let { win ->
+                    win.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+                    win.setLayout(params.width, params.height)
+                }
+                wv.tag = dialog
+                dialog.setOnDismissListener {
+                    if (!resolved) {
+                        resolved = true
+                        try { wv.destroy() } catch (_: Exception) {}
+                        cont.resume(null)
+                    }
+                }
+                Handler(Looper.getMainLooper()).postDelayed({
+                    if (!resolved) {
+                        resolved = true
+                        try { wv.destroy() } catch (_: Exception) {}
+                        try { dialog.dismiss() } catch (_: Exception) {}
+                        try { cont.resume(null) } catch (_: Exception) {}
+                    }
+                }, 120000L)
+
+                wrapper.addView(infoBar)
+                wrapper.addView(container)
+                dialog.show()
+                wv.loadUrl(url)
+            } catch (e: Exception) {
+                cont.resume(null)
+            }
+        }
+    }
+}

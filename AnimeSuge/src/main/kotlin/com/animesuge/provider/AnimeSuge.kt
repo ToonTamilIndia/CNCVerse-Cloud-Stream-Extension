@@ -3,16 +3,11 @@
 import android.util.Base64
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
+import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.loadExtractor
 import org.jsoup.Jsoup
 import java.net.URLEncoder
-import android.content.Intent
-import android.net.Uri
-import android.os.Handler
-import android.os.Looper
-import com.lagradost.cloudstream3.ui.settings.Globals.TV
-import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
 
 class AnimeSuge : MainAPI() {
     companion object {
@@ -26,32 +21,40 @@ class AnimeSuge : MainAPI() {
     override val supportedTypes = setOf(
         TvType.Anime,
         TvType.AnimeMovie,
-        TvType.OVA
+        TvType.OVA,
     )
 
     override val mainPage = mainPageOf(
         "$mainUrl/latest-updated" to "Recently Updated",
-        "$mainUrl/new-release"    to "New Releases",
-        "$mainUrl/most-viewed"    to "Popular Anime",
-        "$mainUrl/status/finished-airing"   to "Completed",
-        "$mainUrl/status/currently-airing"  to "Ongoing"
+        "$mainUrl/new-release" to "New Releases",
+        "$mainUrl/most-viewed" to "Popular Anime",
+        "$mainUrl/status/finished-airing" to "Completed",
+        "$mainUrl/status/currently-airing" to "Ongoing",
     )
 
-    // ── VRF helpers (RC4 → Base64 → shiftCharcode → Base64 → ROT13) ────────
+    private val ajaxHeaders = mapOf(
+        "X-Requested-With" to "XMLHttpRequest",
+        "Referer" to "$mainUrl/",
+    )
 
     private fun rc4(key: ByteArray, input: ByteArray): ByteArray {
         val s = IntArray(256) { it }
         var j = 0
         for (i in 0..255) {
             j = (j + s[i] + (key[i % key.size].toInt() and 0xFF)) and 0xFF
-            val tmp = s[i]; s[i] = s[j]; s[j] = tmp
+            val tmp = s[i]
+            s[i] = s[j]
+            s[j] = tmp
         }
-        var i = 0; j = 0
+        var i = 0
+        j = 0
         val out = ByteArray(input.size)
         for (x in input.indices) {
             i = (i + 1) and 0xFF
             j = (j + s[i]) and 0xFF
-            val tmp = s[i]; s[i] = s[j]; s[j] = tmp
+            val tmp = s[i]
+            s[i] = s[j]
+            s[j] = tmp
             out[x] = ((input[x].toInt() and 0xFF) xor s[(s[i] + s[j]) and 0xFF]).toByte()
         }
         return out
@@ -62,8 +65,14 @@ class AnimeSuge : MainAPI() {
         for (r in t.indices) {
             var s = t[r].code
             when (r % 8) {
-                0 -> s -= 3; 1 -> s += 3; 2 -> s -= 4; 3 -> s += 2
-                4 -> s -= 2; 5 -> s += 5; 6 -> s += 4; 7 -> s += 5
+                0 -> s -= 3
+                1 -> s += 3
+                2 -> s -= 4
+                3 -> s += 2
+                4 -> s -= 2
+                5 -> s += 5
+                6 -> s += 4
+                7 -> s += 5
             }
             result[r] = s.toByte()
         }
@@ -88,15 +97,6 @@ class AnimeSuge : MainAPI() {
         return rot13(b64Shifted)
     }
 
-    // ── Common request headers ───────────────────────────────────────────────
-
-    private val ajaxHeaders = mapOf(
-        "X-Requested-With" to "XMLHttpRequest",
-        "Referer"          to "$mainUrl/"
-    )
-
-    // ── Home page ────────────────────────────────────────────────────────────
-
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = request.data + if (page > 1) "?page=$page" else ""
         val doc = app.get(url).document
@@ -117,21 +117,16 @@ class AnimeSuge : MainAPI() {
         return newAnimeSearchResponse(title, href) { this.posterUrl = poster }
     }
 
-    // ── Search ───────────────────────────────────────────────────────────────
-
     override suspend fun search(query: String): List<SearchResponse> {
         val encoded = URLEncoder.encode(query, "UTF-8")
         return app.get("$mainUrl/filter?keyword=$encoded").document
             .select("div.item").mapNotNull { it.toSearchResult() }.distinctBy { it.url }
     }
 
-    // ── Load (detail page) ───────────────────────────────────────────────────
-
     override suspend fun load(url: String): LoadResponse? {
         val animeUrl = url.replace(Regex("/ep-\\d+$"), "")
         val doc = app.get(animeUrl).document
 
-        // Anime ID — from .watch-wrap[data-id] OR inline script mangaId
         val dataId = doc.selectFirst(".watch-wrap[data-id]")?.attr("data-id")
             ?: Regex("""mangaId\s*=\s*(\d+)""").find(doc.html())?.groupValues?.get(1)
             ?: return null
@@ -151,11 +146,10 @@ class AnimeSuge : MainAPI() {
         val genres = doc.select(".meta a[href*='/genre/'], .data a[href*='/genre/']")
             .map { it.text().trim() }
 
-        // Fetch episode list with VRF
         val vrf = generateVrf(dataId)
         val epsText = app.get(
             "$mainUrl/ajax/episode/list/$dataId?vrf=$vrf",
-            headers = ajaxHeaders
+            headers = ajaxHeaders,
         ).text
         val epsJson = parseJson<AjaxResponse>(epsText)
         val epsHtml = epsJson.result ?: return null
@@ -165,70 +159,63 @@ class AnimeSuge : MainAPI() {
         val dubEpisodes = mutableListOf<Episode>()
 
         epsSoup.select("a[data-ids]").forEach { epLink ->
-            val epNum   = epLink.text().toIntOrNull()
-                ?: epLink.attr("data-slug").toIntOrNull() ?: 1
+            val epNum = epLink.text().toIntOrNull()
+                ?: epLink.attr("data-slug").toIntOrNull()
+                ?: 1
             val epTitle = epLink.attr("data-num").takeIf { it.isNotBlank() } ?: "Episode $epNum"
             val dataIds = epLink.attr("data-ids").takeIf { it.isNotBlank() } ?: return@forEach
-            val hasSub  = epLink.attr("data-sub") == "1"
-            val hasDub  = epLink.attr("data-dub") == "1"
+            val hasSub = epLink.attr("data-sub") == "1"
+            val hasDub = epLink.attr("data-dub") == "1"
 
-            if (hasSub) subEpisodes.add(newEpisode("$animeUrl|$dataId|$epNum|$dataIds|sub") {
-                episode = epNum; name = epTitle
-            })
-            if (hasDub) dubEpisodes.add(newEpisode("$animeUrl|$dataId|$epNum|$dataIds|dub") {
-                episode = epNum; name = epTitle
-            })
+            if (hasSub) {
+                subEpisodes.add(newEpisode("$animeUrl|$dataId|$epNum|$dataIds|sub") {
+                    episode = epNum
+                    name = epTitle
+                })
+            }
+            if (hasDub) {
+                dubEpisodes.add(newEpisode("$animeUrl|$dataId|$epNum|$dataIds|dub") {
+                    episode = epNum
+                    name = epTitle
+                })
+            }
         }
 
         return newAnimeLoadResponse(title, animeUrl, TvType.Anime) {
             this.posterUrl = poster
-            this.plot      = plot
-            this.tags      = genres
+            this.plot = plot
+            this.tags = genres
             if (subEpisodes.isNotEmpty()) addEpisodes(DubStatus.Subbed, subEpisodes)
             if (dubEpisodes.isNotEmpty()) addEpisodes(DubStatus.Dubbed, dubEpisodes)
         }
     }
 
-    // ── Load Links ───────────────────────────────────────────────────────────
-
-    /**
-     * data format: "{animeUrl}|{dataId}|{epNum}|{dataIds}|{sub|dub}"
-     *
-     * Flow:
-     *   1. GET /ajax/server/list?servers={dataIds}  → HTML of server buttons
-     *   2. Filter .server-type[data-type=sub|dub] → get each .server[data-link-id]
-     *   3. GET /ajax/server?get={linkId}            → JSON with result.url (player embed URL)
-     *   4. loadExtractor(playerUrl) or handle megaplay clones directly
-     */
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
+        callback: (ExtractorLink) -> Unit,
     ): Boolean {
-        
         val parts = data.split("|")
         if (parts.size < 5) return false
 
-        val animeUrl     = parts[0]
-        // parts[1] = dataId, parts[2] = epNum — not needed beyond here
-        val dataIds      = parts[3]
-        val selectedType = parts[4] // "sub" or "dub"
+        val animeUrl = parts[0]
+        val dataIds = parts[3]
+        val selectedType = parts[4]
 
-        // 1. Get server list
         val serverListText = app.get(
             "$mainUrl/ajax/server/list?servers=$dataIds",
             headers = mapOf(
                 "X-Requested-With" to "XMLHttpRequest",
-                "Referer"          to "$animeUrl/"
-            )
+                "Referer" to "$animeUrl/",
+            ),
         ).text
         val serverListJson = parseJson<AjaxResponse>(serverListText)
         val serverListHtml = serverListJson.result ?: return false
         val serverListSoup = Jsoup.parse(serverListHtml)
 
-        // 2. Collect matching server link IDs
-        val serversToLoad = mutableListOf<Pair<String, String>>() // (serverName, linkId)
+        val serversToLoad = mutableListOf<Pair<String, String>>()
+
         serverListSoup.select(".server-type").forEach { st ->
             val typeAttr = st.attr("data-type")
             val isMatch = if (selectedType == "sub") {
@@ -237,8 +224,9 @@ class AnimeSuge : MainAPI() {
                 typeAttr in listOf("dub", "adub", "a-dub")
             }
             if (!isMatch) return@forEach
+
             st.select(".server").forEach { s ->
-                val linkId     = s.attr("data-link-id").takeIf { it.isNotBlank() } ?: return@forEach
+                val linkId = s.attr("data-link-id").takeIf { it.isNotBlank() } ?: return@forEach
                 val serverName = s.selectFirst("span")?.text()?.trim() ?: "Server"
                 serversToLoad.add(serverName to linkId)
             }
@@ -248,47 +236,39 @@ class AnimeSuge : MainAPI() {
 
         var found = false
 
-        // 3. For each server, resolve the player URL then extract
-        serversToLoad.forEach { (serverName, linkId) ->
+        for ((serverName, linkId) in serversToLoad) {
             try {
                 val serverInfoText = app.get(
                     "$mainUrl/ajax/server?get=$linkId",
                     headers = mapOf(
                         "X-Requested-With" to "XMLHttpRequest",
-                        "Referer"          to "$animeUrl/"
-                    )
+                        "Referer" to "$animeUrl/",
+                    ),
                 ).text
                 val serverInfoJson = parseJson<ServerInfoResponse>(serverInfoText)
                 val playerUrl = serverInfoJson.result?.url
-                    ?.takeIf { it.isNotBlank() } ?: return@forEach
+                    ?.takeIf { it.isNotBlank() } ?: continue
 
                 val loaded = loadExtractor(playerUrl, "$mainUrl/", subtitleCallback, callback)
                 if (loaded) found = true
-            } catch (e: Exception) {
-                // skip this server and try the next
+            } catch (_: Exception) {
             }
         }
 
         return found
     }
 
-    // ── Data classes ─────────────────────────────────────────────────────────
-
     data class AjaxResponse(
-        @JsonProperty("status") val status: Int?    = null,
-        @JsonProperty("result") val result: String? = null
+        @JsonProperty("status") val status: Int? = null,
+        @JsonProperty("result") val result: String? = null,
     )
 
     data class ServerInfoResponse(
-        @JsonProperty("status") val status: Int?              = null,
-        @JsonProperty("result") val result: ServerInfoResult? = null
+        @JsonProperty("status") val status: Int? = null,
+        @JsonProperty("result") val result: ServerInfoResult? = null,
     )
 
     data class ServerInfoResult(
-        @JsonProperty("url") val url: String? = null
+        @JsonProperty("url") val url: String? = null,
     )
-
-   
-
-
 }

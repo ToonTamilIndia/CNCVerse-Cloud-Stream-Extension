@@ -211,9 +211,10 @@ open class DisneyStudioProvider(
     ): Boolean {
         val apiBase = resolveApiUrl()
         val id = parseJson<LoadData>(data).id
+        val userToken = getNewTvUserToken(apiBase, "hs")
         val response = app.get(
             "$apiBase/newtv/player.php?id=$id",
-            headers = buildNewTvHeaders("hs", mapOf("Usertoken" to ""))
+            headers = buildNewTvHeaders("hs", mapOf("Usertoken" to userToken))
         ).parsed<NewTvPlayerResponse>()
 
         if (response.status != "ok" || response.video_link.isNullOrBlank()) return false

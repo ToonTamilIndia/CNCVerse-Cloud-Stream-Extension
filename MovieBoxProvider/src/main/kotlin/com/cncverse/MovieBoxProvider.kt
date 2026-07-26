@@ -57,10 +57,14 @@ import com.lagradost.cloudstream3.ui.settings.Globals.TV
 import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
 class MovieBoxProvider : MainAPI() {
     companion object {
+        @Volatile
+        private var bearerToken: String? = null
         var context: android.content.Context? = null
+
+        fun getBearerToken(): String? = bearerToken
+        fun setBearerToken(token: String?) { bearerToken = token }
     }
 
-    @Volatile private var bearerToken: String? = null
     override var mainUrl = "https://api3.aoneroom.com"
     override var name = "MovieBox"
     override val hasMainPage = true
@@ -113,15 +117,16 @@ class MovieBoxProvider : MainAPI() {
      * Fetches an anonymous bearer token from the API.
      * Used as a fallback when no x-user header is available.
      */
-    private suspend fun fetchAnonymousToken(): String? {
+    private suspend fun fetchAnonymousToken(ua: String? = null): String? {
         try {
-            if (bearerToken != null) return bearerToken
-            val ua = "com.community.oneroom/50020088 (Linux; U; Android 13; en_US; Pixel 6; Build/TQ3A.230901.001; Cronet/145.0.7582.0)"
+            val cached = getBearerToken()
+            if (cached != null) return cached
+            val userAgent = ua ?: "com.community.oneroom/50020088 (Linux; U; Android 13; en_US; Pixel 6; Build/TQ3A.230901.001; Cronet/145.0.7582.0)"
             val pingUrl = "$mainUrl/wefeed-mobile-bff/tab/ranking-list?tabId=0&categoryType=4516404531735022304&page=1&perPage=1"
             val xct = generateXClientToken()
             val sig = generateXTrSignature("GET", "application/json", "application/json", pingUrl)
             val headers = mapOf(
-                "user-agent" to ua,
+                "user-agent" to userAgent,
                 "accept" to "application/json",
                 "content-type" to "application/json",
                 "x-client-token" to xct,
@@ -136,7 +141,7 @@ class MovieBoxProvider : MainAPI() {
             val json = jacksonObjectMapper().readTree(xUser)
             val token = json["token"]?.asText()
             if (!token.isNullOrBlank()) {
-                bearerToken = token
+                setBearerToken(token)
             }
             return token
         } catch (e: Exception) {
@@ -353,17 +358,28 @@ class MovieBoxProvider : MainAPI() {
         val jsonBody = """{"page": $page, "perPage": 20, "keyword": "$query"}"""
         val xClientToken = generateXClientToken()
         val xTrSignature = generateXTrSignature("POST", "application/json", "application/json; charset=utf-8", url, jsonBody)
-        val headers = mapOf(
-            "user-agent" to "com.community.mbox.in/50020042 (Linux; U; Android 16; en_IN; sdk_gphone64_x86_64; Build/BP22.250325.006; Cronet/133.0.6876.3)",
+        var token = getBearerToken()
+        if (token == null) {
+            val ua = "com.community.oneroom/50020042 (Linux; U; Android 13; en_US; ${randomBrandModel().brand}; Build/TQ3A.230901.001; Cronet/145.0.7582.0)"
+            val fetched = fetchAnonymousToken(ua)
+            if (!fetched.isNullOrBlank()) {
+                token = fetched
+            }
+        }
+        val headers = mutableMapOf(
+            "user-agent" to "com.community.oneroom/50020042 (Linux; U; Android 13; en_US; ${randomBrandModel().brand}; Build/TQ3A.230901.001; Cronet/145.0.7582.0)",
             "accept" to "application/json",
-            "content-type" to "application/json",
+            "content-type" to "application/json; charset=utf-8",
             "connection" to "keep-alive",
             "x-client-token" to xClientToken,
             "x-tr-signature" to xTrSignature,
-            "x-client-info" to """{"package_name":"com.community.mbox.in","version_name":"3.0.03.0529.03","version_code":50020042,"os":"android","os_version":"16","device_id":"$deviceId","install_store":"ps","gaid":"d7578036d13336cc","brand":"google","model":"${randomBrandModel()}","system_language":"en","net":"NETWORK_WIFI","region":"IN","timezone":"Asia/Calcutta","sp_code":""}""",
+            "x-client-info" to """{"package_name":"com.community.oneroom","version_name":"3.0.13.0325.03","version_code":50020042,"os":"android","os_version":"13","device_id":"$deviceId","install_store":"ps","gaid":"1b2212c1-dadf-43c3-a0c8-bd6ce48ae22d","brand":"google","model":"${randomBrandModel()}","system_language":"en","net":"NETWORK_WIFI","region":"US","timezone":"Asia/Calcutta","sp_code":""}""",
             "x-client-status" to "0"
         )
-        val requestBody = jsonBody.toRequestBody("application/json".toMediaType())
+        if (!token.isNullOrBlank()) {
+            headers["Authorization"] = "Bearer $token"
+        }
+        val requestBody = jsonBody.toRequestBody("application/json; charset=utf-8".toMediaType())
         val response = app.post(
             url,
             headers = headers,
@@ -415,17 +431,28 @@ class MovieBoxProvider : MainAPI() {
         val xClientToken = generateXClientToken()
         val xTrSignature = generateXTrSignature("GET", "application/json", "application/json", finalUrl)
 
-        val headers = mapOf(
-            "user-agent" to "com.community.mbox.in/50020042 (Linux; U; Android 16; en_IN; ${randomBrandModel()}; Build/BP22.250325.006; Cronet/133.0.6876.3)",
+        var token = getBearerToken()
+        if (token == null) {
+            val ua = "com.community.oneroom/50020042 (Linux; U; Android 13; en_US; ${randomBrandModel().brand}; Build/TQ3A.230901.001; Cronet/145.0.7582.0)"
+            val fetched = fetchAnonymousToken(ua)
+            if (!fetched.isNullOrBlank()) {
+                token = fetched
+            }
+        }
+        val headers = mutableMapOf(
+            "user-agent" to "com.community.oneroom/50020042 (Linux; U; Android 13; en_US; ${randomBrandModel().brand}; Build/TQ3A.230901.001; Cronet/145.0.7582.0)",
             "accept" to "application/json",
             "content-type" to "application/json",
             "connection" to "keep-alive",
             "x-client-token" to xClientToken,
             "x-tr-signature" to xTrSignature,
-            "x-client-info" to """{"package_name":"com.community.mbox.in","version_name":"3.0.03.0529.03","version_code":50020042,"os":"android","os_version":"16","device_id":"$deviceId","install_store":"ps","gaid":"d7578036d13336cc","brand":"google","model":"${randomBrandModel()}","system_language":"en","net":"NETWORK_WIFI","region":"IN","timezone":"Asia/Calcutta","sp_code":""}""",
+            "x-client-info" to """{"package_name":"com.community.oneroom","version_name":"3.0.13.0325.03","version_code":50020042,"os":"android","os_version":"13","device_id":"$deviceId","install_store":"ps","gaid":"1b2212c1-dadf-43c3-a0c8-bd6ce48ae22d","brand":"google","model":"${randomBrandModel()}","system_language":"en","net":"NETWORK_WIFI","region":"US","timezone":"Asia/Calcutta","sp_code":""}""",
             "x-client-status" to "0",
             "x-play-mode" to "2"
         )
+        if (!token.isNullOrBlank()) {
+            headers["Authorization"] = "Bearer $token"
+        }
 
         val response = app.get(finalUrl, headers = headers)
         if (response.code != 200) {
@@ -700,11 +727,22 @@ class MovieBoxProvider : MainAPI() {
 
             val xUserHeader = subjectResponse.headers["x-user"]
 
-            var token: String? = null
+            var token = getBearerToken()
 
             if (!xUserHeader.isNullOrBlank()) {
                 val xUserJson = mapper.readTree(xUserHeader)
-                token = xUserJson["token"]?.asText()
+                val xToken = xUserJson["token"]?.asText()
+                if (!xToken.isNullOrBlank()) {
+                    token = xToken
+                    setBearerToken(token)
+                }
+            }
+
+            if (token == null) {
+                val fetched = fetchAnonymousToken()
+                if (!fetched.isNullOrBlank()) {
+                    token = fetched
+                }
             }
 
             // Always add the original subject ID first as the default source with proper language name

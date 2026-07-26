@@ -1,10 +1,12 @@
 package com.cncverse
 
 data class PlayFyChannel(
-    val name: String? = null,
-    val logo: String? = null,
-    val visible: Boolean? = null,
-    val links: String? = null,
-    val link_names: List<String>? = null,
-    val is_playlist: Boolean? = null
+    val id: String? = null,
+    val title: String? = null,
+    val image: String? = null,
+    val cat: String? = null,
+    val category: String? = null,
+    val eventInfo: PlayFyEventInfo? = null,
+    val publish: String? = null,
+    val formats: List<String>? = null
 )

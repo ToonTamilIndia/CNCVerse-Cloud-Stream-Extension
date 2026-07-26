@@ -1,9 +1,10 @@
 package com.cncverse
 
 data class PlayFyCategoryData(
-    val visible: Boolean? = null,
-    val name: String = "",
-    val logo: String? = null,
-    val type: String? = null,
-    val api: String? = null
+    val id: String? = null,
+    val title: String? = null,
+    val image: String? = null,
+    val catLink: String? = null,
+    val position: String? = null,
+    val publish: String? = null
 )

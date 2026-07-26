@@ -1,5 +1,6 @@
 package com.cncverse
 
+import android.content.Context
 import android.util.Base64
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
@@ -19,6 +20,10 @@ class SportzxVODProvider(
     private val customName: String,
     private val catLink: String
 ) : MainAPI() {
+
+    companion object {
+        var context: Context? = null
+    }
 
     override var mainUrl = "https://sportzx.live"
     override var name = customName

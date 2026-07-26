@@ -50,6 +50,15 @@ class PlayFyLiveEvents(private val customName: String = "PlayFy Live Events", va
         val eventInfo: LiveEventInfo?
     )
 
+    data class PlayFyLoadData(
+        val channelId: String,
+        val title: String,
+        val poster: String,
+        val category: String,
+        val eventInfo: PlayFyEventInfo?,
+        val formats: List<String>
+    )
+
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
@@ -363,6 +372,78 @@ class PlayFyLiveEvents(private val customName: String = "PlayFy Live Events", va
         }
 
         return true
+    }
+
+    suspend fun emitLink(
+        callback: (ExtractorLink) -> Unit,
+        serverName: String,
+        url: String,
+        headers: Map<String, String>,
+        api: String? = null
+    ) {
+        if (url.contains(".mpd")) {
+            val drmInfo = if (api != null && api.contains(":")) api.split(":") else null
+            if (drmInfo != null && drmInfo.size == 2) {
+                val kidB64 = hexToBase64(drmInfo[0])
+                val keyB64 = hexToBase64(drmInfo[1])
+                if (kidB64 != null && keyB64 != null) {
+                    val h = headers.toMutableMap()
+                    callback(
+                        newDrmExtractorLink(name, serverName, url, INFER_TYPE, CLEARKEY_UUID) {
+                            this.quality = Qualities.Unknown.value
+                            this.key = keyB64
+                            this.kid = kidB64
+                            if (h.isNotEmpty()) this.headers = h
+                        }
+                    )
+                    return
+                }
+            }
+            val h = headers.toMutableMap()
+            callback(
+                newExtractorLink(name, serverName, url, ExtractorLinkType.DASH) {
+                    this.quality = Qualities.Unknown.value
+                    if (h.isNotEmpty()) this.headers = h
+                }
+            )
+        } else if (url.contains(".m3u8") || url.contains(".m3u")) {
+            val h = headers.toMutableMap()
+            if (!h.containsKey("User-Agent")) {
+                h["User-Agent"] = "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/122.0.0.0 Mobile Safari/537.36"
+            }
+            callback(
+                newExtractorLink(name, serverName, url, ExtractorLinkType.M3U8) {
+                    this.quality = Qualities.Unknown.value
+                    if (h.isNotEmpty()) this.headers = h
+                }
+            )
+        } else {
+            val h = headers.toMutableMap()
+            if (!h.containsKey("User-Agent")) {
+                h["User-Agent"] = "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/122.0.0.0 Mobile Safari/537.36"
+            }
+            callback(
+                newExtractorLink(name, serverName, url, INFER_TYPE) {
+                    this.quality = Qualities.Unknown.value
+                    if (h.isNotEmpty()) this.headers = h
+                }
+            )
+        }
+    }
+
+    private fun hexToBase64(hex: String): String? {
+        val n = hex.replace("-", "").trim().toString()
+        if (n.length != 0 && n.length % 2 == 0) {
+            if (Regex("^[0-9a-fA-F]+$").matches(n)) {
+                try {
+                    val bytes = n.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+                    return Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+                } catch (e: Exception) {
+                    return null
+                }
+            }
+        }
+        return null
     }
 
     private suspend fun emitStreamLink(

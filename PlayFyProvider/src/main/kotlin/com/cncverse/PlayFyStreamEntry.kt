@@ -1,16 +1,21 @@
 package com.cncverse
 
 data class PlayFyStreamEntry(
-    val name: String?,
-    val link: String?,
-    val url: String?,
-    val stream_url: String?,
-    val scheme: Int?,
-    val api: String?,
-    val drm: String?,
-    val tokenApi: String?,
-    val linkTag: String?,
-    val colorHex: String?,
+    val id: Int? = null,
+    val title: String? = null,
+    val link: String? = null,
+    val api: String? = null,
+    val type: String? = null,
+    val webLink: String? = null,
+    val defaultLanguage: String? = null,
+    val name: String? = null,
+    val url: String? = null,
+    val stream_url: String? = null,
+    val scheme: Int? = null,
+    val drm: String? = null,
+    val tokenApi: String? = null,
+    val linkTag: String? = null,
+    val colorHex: String? = null,
     val headers: Map<String, String>? = null
 ) {
     val streamUrl: String? get() = url ?: stream_url ?: link

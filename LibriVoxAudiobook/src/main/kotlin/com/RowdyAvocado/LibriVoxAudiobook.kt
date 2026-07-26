@@ -1,5 +1,6 @@
 package com.RowdyAvocado
 
+import android.content.Context
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.HomePageList
 import com.lagradost.cloudstream3.HomePageResponse
@@ -15,17 +16,23 @@ import com.lagradost.cloudstream3.newAnimeSearchResponse
 import com.lagradost.cloudstream3.newEpisode
 import com.lagradost.cloudstream3.newHomePageResponse
 import com.lagradost.cloudstream3.newMovieLoadResponse
+import com.lagradost.cloudstream3.newTvSeriesLoadResponse
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
 
 class LibriVoxAudiobook : MainAPI() {
+
+    companion object {
+        var context: Context? = null
+    }
+
     override var mainUrl = "https://librivox.org"
     override var name = "Librivox Audiobook"
     override var lang = "en"
     override val hasMainPage = true
     override val hasDownloadSupport = true
-    override val supportedTypes = setOf(TvType.Others)
+    override val supportedTypes = setOf(TvType.TvSeries, TvType.Others)
 
     override val mainPage = listOf(
         MainPageData("Latest Audiobook", "$mainUrl/api/feed/audiobooks/title/?format=json")
@@ -68,6 +75,12 @@ class LibriVoxAudiobook : MainAPI() {
             if (href.isBlank()) return@mapNotNull null
             val episodeName = element.text().trim()
             newEpisode(href) { name = episodeName }
+        }
+
+        if (episodes.isNotEmpty()) {
+            return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
+                this.posterUrl = poster
+            }
         }
 
         return newMovieLoadResponse(title, url, TvType.Others, url) {

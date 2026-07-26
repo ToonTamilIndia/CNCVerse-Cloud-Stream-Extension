@@ -40,14 +40,19 @@ import android.net.Uri
  *  - Parses the flat (non-double-encoded) Sportzx API format
  *  - Event channel streams come from /channels/{id}.json (not slug-based .txt)
  */
-class SportzxLiveEventsProvider : MainAPI() {
+class SportzxLiveEventsProvider(
+    name: String = "⚡SportzX Live Events",
+    customLink: String? = null
+) : MainAPI() {
 
     companion object {
         @Volatile var context: android.content.Context? = null
     }
 
+    private val customLink = customLink
+
     override var mainUrl = "https://sportzx.live"
-    override var name = "⚡SportzX Live Events"
+    override var name = name
     override var lang = "ta"
     override val hasMainPage = true
     override val hasChromecastSupport = true

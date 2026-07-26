@@ -1,5 +1,12 @@
 ﻿package com.hexated
 
+import android.net.Uri
+import android.os.Handler
+import android.os.Looper
+import android.webkit.CookieManager
+import android.webkit.WebResourceRequest
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
@@ -11,15 +18,12 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.getQualityFromName
 import com.lagradost.cloudstream3.utils.newExtractorLink
+import okhttp3.Interceptor
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import java.util.*
-import android.content.Intent
-import android.net.Uri
-import android.os.Handler
-import android.os.Looper
-import com.lagradost.cloudstream3.ui.settings.Globals.TV
-import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 class HDrezkaProvider : MainAPI() {
     companion object {
@@ -45,6 +49,111 @@ class HDrezkaProvider : MainAPI() {
         "$mainUrl/animation/?filter=watching" to "аниме",
     )
 
+    private var anubisCookie: String? = null
+
+    private val anubisKiller = Interceptor { chain ->
+        val request = chain.request()
+        val url = request.url.toString()
+
+        if (anubisCookie.isNullOrEmpty()) {
+            anubisCookie = getAnubisCookie(url)
+        }
+
+        val requestBuilder = request.newBuilder()
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
+
+        if (!anubisCookie.isNullOrEmpty()) {
+            requestBuilder.header("Cookie", anubisCookie!!)
+        }
+
+        val response = chain.proceed(requestBuilder.build())
+        val bodyString = response.peekBody(Long.MAX_VALUE).string()
+
+        if (bodyString.contains("id=\"anubis_challenge\"") || response.code == 503) {
+            response.close()
+            val newCookie = getAnubisCookie(url)
+            if (newCookie != null) {
+                anubisCookie = newCookie
+                val retryReq = request.newBuilder()
+                    .header("Cookie", newCookie)
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
+                    .build()
+                return@Interceptor chain.proceed(retryReq)
+            }
+            return@Interceptor chain.proceed(request)
+        }
+
+        return@Interceptor response
+    }
+
+    @Throws(InterruptedException::class)
+    private fun getAnubisCookie(url: String): String? {
+        val latch = CountDownLatch(1)
+        var fetchedCookie: String? = null
+
+        Handler(Looper.getMainLooper()).post {
+            try {
+                val ctx = context ?: throw Exception("Context is null")
+                val webView = WebView(ctx)
+                webView.settings.apply {
+                    javaScriptEnabled = true
+                    domStorageEnabled = true
+                    loadsImagesAutomatically = false
+                    blockNetworkImage = true
+                    mixedContentMode = 0
+                    userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+                }
+                webView.webViewClient = object : WebViewClient() {
+                    override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                        val targetHost = Uri.parse(url).host
+                        val reqHost = request.url.host
+                        if (targetHost != null && reqHost != null && reqHost.contains(targetHost)) {
+                            return super.shouldOverrideUrlLoading(view, request)
+                        }
+                        return true
+                    }
+                }
+                webView.loadUrl(url)
+
+                var polling = true
+                val checkRunnable = object : Runnable {
+                    override fun run() {
+                        if (!polling) return
+                        val cookies = CookieManager.getInstance().getCookie(url)
+                        val hasAuth = cookies?.contains("-anubis-auth=") ?: false
+                        if (!hasAuth) {
+                            Handler(Looper.getMainLooper()).postDelayed(this, 250)
+                            return
+                        }
+                        polling = false
+                        fetchedCookie = cookies?.split(";")
+                            ?.map { it.trim() }
+                            ?.firstOrNull { it.contains("-anubis-auth=") }
+                        try {
+                            webView.stopLoading()
+                            webView.destroy()
+                        } catch (_: Exception) {}
+                        if (latch.count > 0) latch.countDown()
+                    }
+                }
+                Handler(Looper.getMainLooper()).postDelayed(checkRunnable, 250)
+                Handler(Looper.getMainLooper()).postDelayed({
+                    polling = false
+                    try {
+                        webView.stopLoading()
+                        webView.destroy()
+                    } catch (_: Exception) {}
+                    if (latch.count > 0) latch.countDown()
+                }, 15000)
+            } catch (_: Exception) {
+                if (latch.count > 0) latch.countDown()
+            }
+        }
+
+        latch.await(16, TimeUnit.SECONDS)
+        return fetchedCookie
+    }
+
     override suspend fun getMainPage(
         page: Int,
         request: MainPageRequest
@@ -52,7 +161,7 @@ class HDrezkaProvider : MainAPI() {
 
         
         val url = request.data.split("?")
-        val home = app.get("${url.first()}page/$page/?${url.last()}").document.select(
+        val home = app.get("${url.first()}page/$page/?${url.last()}", interceptor = anubisKiller).document.select(
             "div.b-content__inline_items div.b-content__inline_item"
         ).map {
             it.toSearchResult()
@@ -90,7 +199,7 @@ class HDrezkaProvider : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         
         val link = "$mainUrl/search/?do=search&subaction=search&q=$query"
-        val document = app.get(link).document
+        val document = app.get(link, interceptor = anubisKiller).document
 
         return document.select("div.b-content__inline_items div.b-content__inline_item").map {
             it.toSearchResult()
@@ -99,7 +208,7 @@ class HDrezkaProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse {
         
-        val document = app.get(url).document
+        val document = app.get(url, interceptor = anubisKiller).document
 
         val id = url.split("/").last().split("-").first()
         val title = (document.selectFirst("div.b-post__title h1")?.text()?.trim()
@@ -116,7 +225,8 @@ class HDrezkaProvider : MainAPI() {
         val trailer = app.post(
             "$mainUrl/engine/ajax/gettrailervideo.php",
             data = mapOf("id" to id),
-            referer = url
+            referer = url,
+            interceptor = anubisKiller
         ).parsedSafe<Trailer>()?.code.let {
             Jsoup.parse(it.toString()).select("iframe").attr("src")
         }
@@ -154,7 +264,6 @@ class HDrezkaProvider : MainAPI() {
                     )
                 }
             } else {
-                // Extracts the default translator_id from the init script if translation list is missing
                 document.select("script").map { script ->
                     val match = Regex("initCDNSeriesEvents\\(\\d+, (\\d+)").find(script.data())
                     if (match != null) {
@@ -231,8 +340,6 @@ class HDrezkaProvider : MainAPI() {
     }
 
     private fun decryptStreamUrl(data: String): String {
-        // If the URL is already in plain text (starts with quality marker like [360p]),
-        // skip decryption — HDrezka no longer encrypts stream URLs
         if (data.startsWith("[")) return data
 
         fun getTrash(arr: List<String>, item: Int): List<String> {
@@ -353,7 +460,7 @@ class HDrezkaProvider : MainAPI() {
 
         tryParseJson<Data>(data)?.let { res ->
             if (res.server?.isEmpty() == true) {
-                val document = app.get(res.ref ?: return@let).document
+                val document = app.get(res.ref ?: return@let, interceptor = anubisKiller).document
                 document.select("script").map { script ->
                     if (script.data().contains("sof.tv.initCDNMoviesEvents(")) {
                         val dataJson =
@@ -384,7 +491,8 @@ class HDrezkaProvider : MainAPI() {
                             "episode" to res.episode,
                             "action" to res.action,
                         ).filterValues { it != null }.mapValues { it.value as String },
-                        referer = res.ref
+                        referer = res.ref,
+                        interceptor = anubisKiller
                     ).parsedSafe<Sources>()?.let { source ->
                         invokeSources(
                             server.translator_name.toString(),
@@ -433,8 +541,5 @@ class HDrezkaProvider : MainAPI() {
         @JsonProperty("success") val success: Boolean?,
         @JsonProperty("code") val code: String?,
     )
-
-
-
 
 }

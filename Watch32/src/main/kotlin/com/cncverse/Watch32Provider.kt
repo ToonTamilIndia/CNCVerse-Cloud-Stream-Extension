@@ -1,5 +1,6 @@
 ﻿package com.cncverse
 
+import android.content.Context
 import com.lagradost.cloudstream3.Episode
 import com.lagradost.cloudstream3.HomePageList
 import com.lagradost.cloudstream3.HomePageResponse
@@ -22,6 +23,10 @@ import org.json.JSONObject
 import org.jsoup.nodes.Element
 
 class Watch32Provider : MainAPI() {
+    companion object {
+        var context: Context? = null
+    }
+
     override var mainUrl = "https://watch32.sx"
     override var name = "Watch32"
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)

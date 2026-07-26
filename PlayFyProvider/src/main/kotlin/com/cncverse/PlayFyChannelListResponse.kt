@@ -1,6 +1,6 @@
 package com.cncverse
 
 data class PlayFyChannelListResponse(
-    val channel: String = "",
-    val highlight: String = ""
+    val channels: List<PlayFyChannel>? = null,
+    val cats: List<PlayFyCatFilter>? = null
 )

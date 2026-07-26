@@ -1,11 +1,6 @@
 // use an integer for version numbers
 version = 15
 
-android {
-    buildFeatures {
-        buildConfig = true
-    }
-}
 
 cloudstream {
     description = "MovieLinkBD - Largest Movie Download Site in Bangladesh"

@@ -1,10 +1,5 @@
 version = 33
 
-android {
-    buildFeatures {
-        buildConfig = true
-    }
-}
 
 
 cloudstream {

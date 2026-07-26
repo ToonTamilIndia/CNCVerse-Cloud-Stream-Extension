@@ -1,10 +1,5 @@
 version = 31
 
-android {
-    buildFeatures {
-        buildConfig = true
-    }
-}
 
 cloudstream {
     language = "en"

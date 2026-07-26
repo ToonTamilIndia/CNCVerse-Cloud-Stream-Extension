@@ -1,11 +1,6 @@
 // use an integer for version numbers
 version = 107
 
-android {
-    buildFeatures {
-        buildConfig = true
-    }
-}
 
 dependencies {
     implementation("androidx.core:core:1.16.0")

@@ -46,31 +46,6 @@ subprojects {
             minSdk = 21
             compileSdkVersion(35)
             targetSdk = 35
-
-            // CineTvProvider keys (from original NivinCNC source)
-            buildConfigField("String", "CINETV_SECRET_KEY_ENCRYPTED", "\"MxASAkl/yHTGg+/Tw1R7u96nGqkWsOZ2\"")
-            buildConfigField("String", "CINETV_DES_KEY", "\"dsawdf634eebGFHITR5UT9kS0\"")
-            buildConfigField("String", "CINETV_DES_IV", "\"32456738\"")
-            buildConfigField("String", "CINETV_AES_KEY", "\"0123456789123456\"")
-            buildConfigField("String", "CINETV_AES_IV", "\"2015030120123456\"")
-            buildConfigField("String", "CINETV_WS_SECRET", "\"00b5f05c40b4f1d91dbc9b3fd8a059ef\"")
-
-            // CastleTv provider key suffix
-            buildConfigField("String", "CASTLE_SUFFIX", "\"\"")
-
-            // Pikashow provider keys (original values)
-            buildConfigField("String", "PIKASHOW_API_KEY", "\"\"")
-            buildConfigField("String", "PIKASHOW_HMAC_SECRET", "\"\"")
-
-            // XonProvider Firebase config (empty = uses hardcoded fallback)
-            buildConfigField("String", "XON_FIREBASE_API_KEY", "\"\"")
-            buildConfigField("String", "XON_FIREBASE_APP_ID", "\"\"")
-            buildConfigField("String", "XON_FIREBASE_PROJECT_NUMBER", "\"\"")
-
-            // Library identifiers
-            buildConfigField("String", "LIBRARY_PACKAGE_NAME", "\"com.cncverse\"")
-            buildConfigField("String", "SMARTLINK_URL", "\"\"")
-            buildConfigField("String", "SPEEDLINK_URL", "\"\"")
         }
 
         compileOptions {

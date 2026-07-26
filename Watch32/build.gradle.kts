@@ -1,11 +1,6 @@
 // use an integer for version numbers
 version = 32
 
-android {
-    buildFeatures {
-        buildConfig = true
-    }
-}
 
 
 cloudstream {

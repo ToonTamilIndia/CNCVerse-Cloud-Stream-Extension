@@ -1,10 +1,5 @@
 version = 14
 
-android {
-    buildFeatures {
-        buildConfig = true
-    }
-}
 
 dependencies {
     implementation("androidx.core:core:1.16.0")

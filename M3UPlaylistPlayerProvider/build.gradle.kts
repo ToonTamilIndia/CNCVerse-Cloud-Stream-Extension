@@ -3,7 +3,6 @@ version = 15
 
 android {
     buildFeatures {
-        buildConfig = true
         viewBinding = true
     }
 }

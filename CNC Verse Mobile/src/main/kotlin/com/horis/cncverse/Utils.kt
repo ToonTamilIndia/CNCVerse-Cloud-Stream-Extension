@@ -235,16 +235,6 @@ fun buildNewTvHeaders(ott: String, extra: Map<String, String> = emptyMap()): Map
     return result
 }
 
-data class NewTvTokenResponse(
-    val token_hash: String? = null
-)
-
-data class NewTvPlayerResponse(
-    val status: String? = null,
-    val video_link: String? = null,
-    val referer: String? = null
-)
-
 data class NewTvOtpResponse(
     val otp: String? = null,
     val status: String? = null,

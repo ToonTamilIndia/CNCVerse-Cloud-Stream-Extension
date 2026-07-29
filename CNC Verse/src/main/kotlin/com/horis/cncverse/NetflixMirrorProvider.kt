@@ -234,17 +234,31 @@ class NetflixMirrorProvider : MainAPI() {
     ): Boolean {
         val apiBase = resolveApiUrl()
         val id = parseJson<LoadData>(data).id
-        val userToken = getNewTvUserToken(apiBase, "nf")
-        val response = app.get(
-            "$apiBase/newtv/player.php?id=$id",
-            headers = buildNewTvHeaders("nf", mapOf("Usertoken" to userToken))
-        ).parsed<NewTvPlayerResponse>()
 
-        if (response.status != "ok" || response.video_link.isNullOrBlank()) return false
+        var userToken = getNewTvUserToken(apiBase, "nf")
+        var response: NewTvPlayerResponse? = try {
+            app.get(
+                "$apiBase/newtv/player.php?id=$id",
+                headers = buildNewTvHeaders("nf", mapOf("Usertoken" to userToken))
+            ).parsedSafe<NewTvPlayerResponse>()
+        } catch (_: Exception) { null }
+
+        if (response?.status == "otp") {
+            userToken = getNewTvUserToken(apiBase, "nf", forceRefresh = true)
+            response = try {
+                app.get(
+                    "$apiBase/newtv/player.php?id=$id",
+                    headers = buildNewTvHeaders("nf", mapOf("Usertoken" to userToken))
+                ).parsedSafe<NewTvPlayerResponse>()
+            } catch (_: Exception) { null }
+        }
+
+        val videoLink = response?.video_link?.takeIf { it.isNotBlank() } ?: return false
+        val referer = response?.referer?.takeIf { it.isNotBlank() } ?: apiBase
 
         callback.invoke(
-            newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {
-                this.referer = response.referer ?: apiBase
+            newExtractorLink(name, name, videoLink, type = ExtractorLinkType.M3U8) {
+                this.referer = referer
             }
         )
 

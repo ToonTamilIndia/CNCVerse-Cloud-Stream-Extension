@@ -347,7 +347,7 @@ suspend fun solveCloudflareInWebView(url: String): String? {
                 val cookieManager = CookieManager.getInstance()
                 cookieManager.setAcceptCookie(true)
                 val wv = WebView(ctx)
-                cookieManager.setAcceptThirdPartyCookies(wv, true)
+                try { cookieManager.setAcceptThirdPartyCookies(wv, true) } catch (_: NoSuchMethodError) {} catch (_: Exception) {}
                 val ws = wv.settings
                 ws.javaScriptEnabled = true
                 ws.domStorageEnabled = true

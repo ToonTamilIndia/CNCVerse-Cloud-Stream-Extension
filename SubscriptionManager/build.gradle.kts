@@ -1,4 +1,4 @@
-version = 15
+version = 14
 
 
 dependencies {
@@ -14,5 +14,5 @@ cloudstream {
     status = 1
     tvTypes = listOf("Settings")
     requiresResources = true
-    iconUrl = "https://github.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/SubscriptionManager/icon.png"
+    iconUrl = "https://github.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/CNC%20Verse/icon.png"
 }

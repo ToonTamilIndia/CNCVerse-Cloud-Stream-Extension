@@ -2,7 +2,6 @@ package com.horis.cncverse
 
 import android.content.Context
 import com.horis.cncverse.entities.EpisodesData
-import com.horis.cncverse.entities.PlayList
 import com.horis.cncverse.entities.PostData
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
@@ -199,47 +198,35 @@ open class DisneyStudioProvider(
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        val apiBase = resolveApiUrl()
         val id = parseJson<LoadData>(data).id
-        cookie_value = if (cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
 
-        val cookies = buildCookies()
+        var userToken = getNewTvUserToken(apiBase, "hs")
+        var response: NewTvPlayerResponse? = try {
+            app.get(
+                "$apiBase/newtv/player.php?id=$id",
+                headers = buildNewTvHeaders("hs", mapOf("Usertoken" to userToken))
+            ).parsedSafe<NewTvPlayerResponse>()
+        } catch (_: Exception) { null }
 
-        val cookieStr = cookies.map { "${it.key}=${it.value}" }.joinToString("; ")
-
-        val playlistHeaders = mapOf(
-            "Accept" to "application/json, text/plain, */*",
-            "Cookie" to cookieStr,
-            "Referer" to "$mainUrl/mobile/home?app=1",
-            "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/144.0.7559.132 Safari/537.36 /OS.Gatu v3.0",
-            "X-Requested-With" to "app.netmirror.netmirrornew"
-        )
-
-        val playlist = app.get(
-            "$mainUrl/mobile/playlist.php?id=$id",
-            headers = playlistHeaders
-        ).parsed<PlayList>()
-
-        playlist.forEach { item ->
-            item.sources.forEach { source ->
-                callback.invoke(
-                    newExtractorLink(name, name, source.file, type = ExtractorLinkType.M3U8) {
-                        this.quality = getQualityFromName(source.file.substringAfter("q=", ""))
-                        this.referer = "$mainUrl/"
-                        this.headers = playlistHeaders
-                    }
-                )
-            }
-
-            item.tracks?.forEach { track ->
-                if (!track.file.isNullOrBlank()) {
-                    subtitleCallback.invoke(
-                        newSubtitleFile(track.label ?: "Unknown", track.file) {
-                            headers = mapOf("Referer" to "$mainUrl/")
-                        }
-                    )
-                }
-            }
+        if (response?.status == "otp") {
+            userToken = getNewTvUserToken(apiBase, "hs", forceRefresh = true)
+            response = try {
+                app.get(
+                    "$apiBase/newtv/player.php?id=$id",
+                    headers = buildNewTvHeaders("hs", mapOf("Usertoken" to userToken))
+                ).parsedSafe<NewTvPlayerResponse>()
+            } catch (_: Exception) { null }
         }
+
+        val videoLink = response?.video_link?.takeIf { it.isNotBlank() } ?: return false
+        val referer = response?.referer?.takeIf { it.isNotBlank() } ?: apiBase
+
+        callback.invoke(
+            newExtractorLink(name, name, videoLink, type = ExtractorLinkType.M3U8) {
+                this.referer = referer
+            }
+        )
 
         return true
     }

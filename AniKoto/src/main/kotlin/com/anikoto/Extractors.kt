@@ -63,23 +63,28 @@ open class MegaPlay : ExtractorApi() {
             val streamId = playerEl?.attr("data-id")
                 ?: playerEl?.attr("data-realid")
                 ?: Regex("""/stream/s-\d+/(\d+)/""").find(url)?.groupValues?.get(1)
+                ?: Regex("""/stream/([A-Za-z0-9_-]+)/""").find(url)?.groupValues?.get(1)
                 ?: return
 
             val type = if (url.contains("/dub", ignoreCase = true)) "dub" else "sub"
 
-            val ajaxHeaders = mapOf(
-                "Referer" to url,
-            )
-
             val jsonText = try {
                 app.get(
                     "$host/stream/getSources?id=$streamId&type=$type",
-                    headers = ajaxHeaders,
+                    headers = mapOf("Referer" to url),
                     referer = url
                 ).text
             } catch (_: Exception) {
-                return
-            }
+                null
+            } ?: try {
+                app.get(
+                    "$host/stream/getSourcesNew?id=$streamId&id=$streamId&type=$type&type=$type",
+                    headers = mapOf("Referer" to url),
+                    referer = url
+                ).text
+            } catch (_: Exception) {
+                null
+            } ?: return
 
             val root = try {
                 parseJson<MegaPlayResponse>(jsonText)

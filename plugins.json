@@ -1,10 +1,10 @@
 [
     {
-        "iconUrl": "https://github.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/AniKoto/icon.png",
-        "fileHash": "sha256-516f5a7c3460c1c3d969220829f421fa654df55a0dd90982a506881686a15ec6",
+        "iconUrl": "https://anikototv.to/AnikotoTheme/assets/images/favicon.png",
+        "fileHash": "sha256-0003cfdf6b44b24cf5ce4afe4300f8cbfb416606831a3db0f46bad84f84c26fc",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
-        "fileSize": 45753,
+        "fileSize": 55954,
         "status": 1,
         "language": "en",
         "authors": [
@@ -14,7 +14,7 @@
             "Anime",
             "TvSeries"
         ],
-        "version": 8,
+        "version": 7,
         "internalName": "AniKoto",
         "description": "Anime Provider",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/AniKoto.cs3",
@@ -22,7 +22,7 @@
     },
     {
         "iconUrl": "https://t2.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://animesuge.cz&size=64",
-        "fileHash": "sha256-3d5f21bf6bcc1d2c5169ef72c20f4b7706240c2886a17f222d41dd43fea84006",
+        "fileHash": "sha256-615a061a26f35d45032f88cc8cca32e827ff97c7a99062d5ad2a0c222284bea2",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
         "fileSize": 31363,
@@ -36,17 +36,17 @@
             "AnimeMovie",
             "OVA"
         ],
-        "version": 8,
+        "version": 7,
         "internalName": "AnimeSuge",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/AnimeSuge.cs3",
         "name": "AnimeSuge"
     },
     {
         "iconUrl": "https://play-lh.googleusercontent.com/G9s84Cm1TDnKDX2P8nipS_s60cuCnYtjBRRLespF8nivjXmbV9tF1fY37clZhXMLaA",
-        "fileHash": "sha256-3515a59c79b412b640401b33c2a9200ee2dc535881ec7c7bc9ea1ecab144098b",
+        "fileHash": "sha256-c3a51280f6db570b03501c3d8da9294b8cb0399281920a111af863a4c3d23b58",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
-        "fileSize": 81566,
+        "fileSize": 81565,
         "status": 3,
         "language": "en",
         "authors": [
@@ -58,7 +58,7 @@
             "TvSeries",
             "Documentary"
         ],
-        "version": 34,
+        "version": 33,
         "internalName": "BilibiliProvider",
         "description": "Bilibili TV - International streaming platform for anime, movies, and variety shows (bilibili.tv)",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/BilibiliProvider.cs3",
@@ -66,7 +66,7 @@
     },
     {
         "iconUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/CastleTvProvider/icon.png",
-        "fileHash": "sha256-2f0da92e7022c8e03a002d3a866637f6025fb4039dab6b11bd8cc79d2da10bbb",
+        "fileHash": "sha256-107bbad18223a0a8d58c9a8ebddff9390fc6e477af50a10bb961573b69ceb995",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
         "fileSize": 64702,
@@ -79,7 +79,7 @@
             "Movie",
             "TvSeries"
         ],
-        "version": 39,
+        "version": 38,
         "internalName": "CastleTvProvider",
         "description": "Castle TV Movies and Series Provider",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/CastleTvProvider.cs3",
@@ -87,7 +87,7 @@
     },
     {
         "iconUrl": "https://modapk.world/wp-content/uploads/2025/11/Et-90x90.png",
-        "fileHash": "sha256-5eeabfa5531cc5d4d07da0224553b22d55f66affe15943b2422c13e0f2fa4127",
+        "fileHash": "sha256-18d672b5839eacb70be3f0a40120ec375c4119efa4d51da5008c396a11b5a440",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
         "fileSize": 37747,
@@ -100,7 +100,7 @@
             "Movie",
             "TvSeries"
         ],
-        "version": 34,
+        "version": 33,
         "internalName": "CineTvProvider",
         "description": "Clone of Cinema, Memesapp , FilmTV etc",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/CineTvProvider.cs3",
@@ -108,10 +108,10 @@
     },
     {
         "iconUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/CNC%20Verse/icon.png",
-        "fileHash": "sha256-730b09b5966767716ab9a694ca398a9384d1ea8d854edadf00bab7bb30031924",
+        "fileHash": "sha256-01126363fb38bffdd44fbdc3cb942d9ec31056c8bdb83a23d7560d62506fe557",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
-        "fileSize": 80602,
+        "fileSize": 83722,
         "status": 1,
         "language": "ta",
         "authors": [
@@ -121,18 +121,18 @@
             "Movie",
             "TvSeries"
         ],
-        "version": 108,
+        "version": 107,
         "internalName": "CNC Verse",
         "description": "Netflix, PrimeVideo, Disney+ Hotstar Contents in Multiple Languages",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/CNC Verse.cs3",
         "name": "CNC Verse"
     },
     {
-        "iconUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/CNC%20Verse%20Mobile/icon.png",
-        "fileHash": "sha256-2e56344f743e2b8341df5c42c8aa2fccf7dcb13e804b804c8c9281eff80ef6b9",
+        "iconUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/CNC%20Verse%20Mobile/logo.jpeg",
+        "fileHash": "sha256-a2111f66dc610694e7b3104d834525cdafe6475d55da166b5ea35d56a64e22d0",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
-        "fileSize": 84725,
+        "fileSize": 80822,
         "status": 1,
         "language": "ta",
         "authors": [
@@ -142,7 +142,7 @@
             "Movie",
             "TvSeries"
         ],
-        "version": 83,
+        "version": 7,
         "internalName": "CNC Verse Mobile",
         "description": "Netflix, PrimeVideo, Disney+ Hotstar Contents in Multiple Languages (Mobile)",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/CNC Verse Mobile.cs3",
@@ -150,10 +150,10 @@
     },
     {
         "iconUrl": "https://cricfy.pro/wp-content/uploads/2024/11/cropped-cricfytv-2.png",
-        "fileHash": "sha256-15b1b02fd3181e9f0e4de2f2304f9e215dbae740f02b5f9e89802c19b957bf31",
+        "fileHash": "sha256-e5dd065fd61bdfff9deacfe0dd6a03e8ac8d30f8857956c313bbb2cc17992919",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
-        "fileSize": 90032,
+        "fileSize": 90033,
         "status": 1,
         "language": "en",
         "authors": [
@@ -162,7 +162,7 @@
         "tvTypes": [
             "Live"
         ],
-        "version": 66,
+        "version": 65,
         "internalName": "CricifyProvider",
         "description": "Watch Live sports and TV channels",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/CricifyProvider.cs3",
@@ -170,7 +170,7 @@
     },
     {
         "iconUrl": "https://www.google.com/s2/favicons?domain=desi-serials.to&sz=%size%",
-        "fileHash": "sha256-70cf823e51392a1f0b414adfa4e6f743b28656d02c294ed8ed57745eef90e77f",
+        "fileHash": "sha256-cdf4ddfc7958fb98b65d2398c6fca9cd46082f88c05fab84c4709a1e913a715f",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
         "fileSize": 32508,
@@ -182,7 +182,7 @@
         "tvTypes": [
             "TvSeries"
         ],
-        "version": 31,
+        "version": 30,
         "internalName": "DesiSerialsProvider",
         "description": "Desi Serials Tv Shows Provider",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/DesiSerialsProvider.cs3",
@@ -190,7 +190,7 @@
     },
     {
         "iconUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/DoFlixProvider/icon.png",
-        "fileHash": "sha256-6dd8222ac77a4f247cc1597c9cb121d4fdfb684a3e532fbc8e3a786f6f203394",
+        "fileHash": "sha256-ff9639d2246e8efe758a0cc79d688c64fb9b3064537c294838d526104310b3e3",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
         "fileSize": 62345,
@@ -203,7 +203,7 @@
             "TvSeries",
             "Movie"
         ],
-        "version": 34,
+        "version": 33,
         "internalName": "DoFlixProvider",
         "description": "DoFlix Provider for Movies and TV Series",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/DoFlixProvider.cs3",
@@ -211,7 +211,7 @@
     },
     {
         "iconUrl": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/master/EinthusanProvider/icon.png",
-        "fileHash": "sha256-5e595785e226ebb5094d67d92aa545a389ed75959c619344b9bbeaa2b6b3c7cd",
+        "fileHash": "sha256-c63575fb6d43ea838ca0fb9009589b3803962dae7165363a88186ef9bc303694",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
         "fileSize": 17322,
@@ -223,7 +223,7 @@
         "tvTypes": [
             "Movie"
         ],
-        "version": 36,
+        "version": 35,
         "internalName": "EinthusanProvider",
         "description": "Indian Multi-language HD Provider",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/EinthusanProvider.cs3",
@@ -231,7 +231,7 @@
     },
     {
         "iconUrl": "https://www.google.com/s2/favicons?domain=goldenaudiobook.com/&sz=%size%",
-        "fileHash": "sha256-22197c282f4904089394c9dadeda72d3bad6df804ee4c253832567054f192411",
+        "fileHash": "sha256-fb37f02e11a8472d1114c4e7c8c8096053e0eca0436f06f608a7d4992cdfb975",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
         "fileSize": 14669,
@@ -243,7 +243,7 @@
         "tvTypes": [
             "Others"
         ],
-        "version": 31,
+        "version": 30,
         "internalName": "GoldenAudiobook",
         "description": "Audiobooks - Use Picture in Picture or VLC as external player",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/GoldenAudiobook.cs3",
@@ -251,10 +251,10 @@
     },
     {
         "iconUrl": "https://images.dwncdn.net/images/t_app-icon-l/p/b0c9663c-0d61-4941-b12f-91c58c06189f/1137087733/hdo-box-logo",
-        "fileHash": "sha256-06822abaa62f55c7586e19aa0d15f0c127067b5fe4be27ddc506e5c9a2ce52de",
+        "fileHash": "sha256-fa45787a2094ee2fab3df03ec327203b0fe12ab2e5310dc91cd55e84ac1f7dcb",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
-        "fileSize": 25239,
+        "fileSize": 25238,
         "status": 0,
         "language": "en",
         "authors": [
@@ -264,7 +264,7 @@
             "Movies",
             "TvSeries"
         ],
-        "version": 34,
+        "version": 33,
         "internalName": "HDOProvider",
         "description": "HDO provider",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/HDOProvider.cs3",
@@ -272,7 +272,7 @@
     },
     {
         "iconUrl": "https://www.google.com/s2/favicons?domain=rezka.ag&sz=%size%",
-        "fileHash": "sha256-c21c47bf8e056faf6a9badf1f0c6af13b9296d7823b5038cd04182f63087ca17",
+        "fileHash": "sha256-828703dfaf64b0e91413becd6c0ffa093032068804f085c87384a8506a1df60f",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
         "fileSize": 36854,
@@ -287,14 +287,14 @@
             "TvSeries",
             "Movie"
         ],
-        "version": 34,
+        "version": 33,
         "internalName": "HDrezkaProvider",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/HDrezkaProvider.cs3",
         "name": "HDrezkaProvider"
     },
     {
-        "iconUrl": "https://github.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/LibriVoxAudiobook/icon.png",
-        "fileHash": "sha256-8bd9e00ba6b34049890976ed2270b7367c4c947ba1392fe1aad43cc5372f8cb5",
+        "iconUrl": "https://librivox.org/wp-content/themes/librivox/images/librivox-logo.png",
+        "fileHash": "sha256-07e3587e0a173c7a097b9b81b40836670157dde3a226f1fbcf25659946197803",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
         "fileSize": 12475,
@@ -306,7 +306,7 @@
         "tvTypes": [
             "Audiobook"
         ],
-        "version": 32,
+        "version": 31,
         "internalName": "LibriVoxAudiobook",
         "description": "LibriVox Audiobooks",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/LibriVoxAudiobook.cs3",
@@ -314,7 +314,7 @@
     },
     {
         "iconUrl": "https://www.livxow.site/logo.jpg",
-        "fileHash": "sha256-653c3b8ac836581715f0ed915b0f7d2a0db048f322e53a1674701fae8d2a9b62",
+        "fileHash": "sha256-aae67a19efce55355f5467b00d82d2e436505c09c7da4d2c53e96406c7b7dd74",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
         "fileSize": 98854,
@@ -326,7 +326,7 @@
         "tvTypes": [
             "Live"
         ],
-        "version": 15,
+        "version": 14,
         "internalName": "LivXowProvider",
         "description": "Watch Live Sports and TV Channels via LivXow",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/LivXowProvider.cs3",
@@ -334,7 +334,7 @@
     },
     {
         "iconUrl": "https://play-lh.googleusercontent.com/V4t4JeQV2Cu9u72hKuqOW5c0IfwcZuuVS1d9PF2uJsW3rlIq-aOMTrT5bABVGaAFTcM=w480-h960-rw",
-        "fileHash": "sha256-93fca06e6b2430f15f1d95d1343d8ce1d5dfe57d14046a29f253de7b6f84c168",
+        "fileHash": "sha256-bcb27f51fcfbab8967a08ddf568b1a3b460d9e3fa7befca1477b3c4262b6f713",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
         "fileSize": 42065,
@@ -346,7 +346,7 @@
         "tvTypes": [
             "Live"
         ],
-        "version": 16,
+        "version": 15,
         "internalName": "M3UPlaylistPlayerProvider",
         "description": "Add your own m3u playlists",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/M3UPlaylistPlayerProvider.cs3",
@@ -354,7 +354,7 @@
     },
     {
         "iconUrl": "https://mlsbd.co/wp-content/uploads/2020/08/MLSBD-Logo.png",
-        "fileHash": "sha256-a2a4ac6b69f62586ba3b1714696e23453afae0562ecaa54c354332ff352ae622",
+        "fileHash": "sha256-9195ac68d02f54a303cf0f585ab318f0725e973cec47ad6ad58a0842a975b7a8",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
         "fileSize": 48520,
@@ -369,7 +369,7 @@
             "AnimeMovie",
             "AsianDrama"
         ],
-        "version": 31,
+        "version": 30,
         "internalName": "MLSBDProvider",
         "description": "The largest movie link store in Bangladesh",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/MLSBDProvider.cs3",
@@ -377,10 +377,10 @@
     },
     {
         "iconUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/MovieBoxProvider/icon.png",
-        "fileHash": "sha256-af3db8daeb01cc22d1076e1a3d798b2b5ec5c1fdf2838246d48bac6243a9acff",
+        "fileHash": "sha256-74fd3d4f03bbbfa33f1238cdfeeb215bbcee4553b71f05fa3182e80eb5a79ba1",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
-        "fileSize": 71881,
+        "fileSize": 71874,
         "status": 1,
         "language": "hi",
         "authors": [
@@ -398,10 +398,10 @@
     },
     {
         "iconUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/MovieBoxProviderIN/icon.png",
-        "fileHash": "sha256-eef2e3c7dc407c22809837d78035d8c89797c5f2bf684ad05e003e97fc5b30a7",
+        "fileHash": "sha256-7b876afb1f181b06535975a9612d712a125f5d6b35271f9bc474dea1a54534c1",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
-        "fileSize": 69439,
+        "fileSize": 69443,
         "status": 1,
         "language": "hi",
         "authors": [
@@ -419,7 +419,7 @@
     },
     {
         "iconUrl": "https://movielinkbd.one/img/favicon-192x192.png",
-        "fileHash": "sha256-36cac17c99279d242de7d7d26578c4f44473a82a86b5f27f6473da560911c4f1",
+        "fileHash": "sha256-8f0297abc4f76343fed795f800523764c8485c089faaffc5e621d2bd3ce32c9c",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
         "fileSize": 37149,
@@ -434,7 +434,7 @@
             "AnimeMovie",
             "AsianDrama"
         ],
-        "version": 16,
+        "version": 15,
         "internalName": "MovieLinkBDProvider",
         "description": "MovieLinkBD - Largest Movie Download Site in Bangladesh",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/MovieLinkBDProvider.cs3",
@@ -442,7 +442,7 @@
     },
     {
         "iconUrl": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/master/MoviezwapProvider/icon.png",
-        "fileHash": "sha256-6c49f170e9b18ead63eaddc74e01ccccf25e3e27a2b00ac5dc9ea2431d417328",
+        "fileHash": "sha256-9cee87eb4c111e953e2fa277af240006635b77624b28775e9df38c889c6f62ca",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
         "fileSize": 17397,
@@ -454,7 +454,7 @@
         "tvTypes": [
             "Movie"
         ],
-        "version": 31,
+        "version": 30,
         "internalName": "MoviezwapProvider",
         "description": "Telugu Movies Provider - Moviezwap",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/MoviezwapProvider.cs3",
@@ -462,7 +462,7 @@
     },
     {
         "iconUrl": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/refs/heads/master/PikashowProvider/logo.png",
-        "fileHash": "sha256-a75b7e8dc1b7a09a98b1c767a43b19290a274432b7ec31a5c5db3088692cc944",
+        "fileHash": "sha256-56059a25eb5c55c5df1bc24e06422f4215e28dc17185a85cba284e88e1d60763",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
         "fileSize": 54912,
@@ -475,7 +475,7 @@
             "Movie",
             "TvSeries"
         ],
-        "version": 31,
+        "version": 30,
         "internalName": "PikashowProvider",
         "description": "Stream movies and series from Pikashow",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/PikashowProvider.cs3",
@@ -483,7 +483,7 @@
     },
     {
         "iconUrl": "https://www.playfy.site/logo.jpg",
-        "fileHash": "sha256-c522a7ced89b96f12703eb6267aee1aba3f7c0db9cc0e4c67e6ec2d7e5691eaa",
+        "fileHash": "sha256-144926106b34d6d512004e6df3499a0ece46d17143d4101b9556dd2867adccad",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
         "fileSize": 106100,
@@ -495,7 +495,7 @@
         "tvTypes": [
             "Live"
         ],
-        "version": 9,
+        "version": 8,
         "internalName": "PlayFyProvider",
         "description": "Watch Live IPTV Channels and Live Events via PlayFy",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/PlayFyProvider.cs3",
@@ -503,7 +503,7 @@
     },
     {
         "iconUrl": "https://www.google.com/s2/favicons?domain=playztv.top&sz=%size%",
-        "fileHash": "sha256-456c50c5e6ec8c72d0efc36664eccb302d64f02fdc1d8af1d5d95af856f3ca7d",
+        "fileHash": "sha256-94726f20c446ed79a1698b4a35da9e1fe1fe859752b5b9227339532990d72be2",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
         "fileSize": 82497,
@@ -515,7 +515,7 @@
         "tvTypes": [
             "Live"
         ],
-        "version": 34,
+        "version": 33,
         "internalName": "PlayZTVProvider",
         "description": "Watch Live TV channels & sports via PlayZTV",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/PlayZTVProvider.cs3",
@@ -523,7 +523,7 @@
     },
     {
         "iconUrl": "https://cdn.mytuner.mobi/static/ctr/icons/App_192x192/in.png",
-        "fileHash": "sha256-8ab0449b2123c27a9cd5b22e79e7969602a48764ee8062d38715a7c0853b5224",
+        "fileHash": "sha256-dcfd1d1c07baab7eca4f90bf8aeae153088ad239d5a9e88ce59301b8d2b87578",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
         "fileSize": 13667,
@@ -535,7 +535,7 @@
         "tvTypes": [
             "Live"
         ],
-        "version": 32,
+        "version": 31,
         "internalName": "RadioIndiaProvider",
         "description": "Radio India Provider",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/RadioIndiaProvider.cs3",
@@ -543,10 +543,10 @@
     },
     {
         "iconUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/Rtally/icon.png",
-        "fileHash": "sha256-7b69af454f4ebade7b33df101796af42696ce9393d9e0d71ed1bab93b51c462e",
+        "fileHash": "sha256-bb6234653631330501b45a8bfe4fcefb1e927631e6211dfd13400dd1a3cafb92",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
-        "fileSize": 15311,
+        "fileSize": 15312,
         "status": 1,
         "language": "en",
         "authors": [
@@ -559,7 +559,7 @@
             "AnimeMovie",
             "AsianDrama"
         ],
-        "version": 47,
+        "version": 46,
         "internalName": "Rtally",
         "description": "Movie and TV Series provider",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/Rtally.cs3",
@@ -567,7 +567,7 @@
     },
     {
         "iconUrl": "https://appteka.store/get/a20p17EuCKFD08AaFsfH3JSJ6OU30ccp18WrKaNDze4LqOsDArhKj13-f-SjAayiWJH6P6pv9AlzhcfzEXlmRokU-I4=/726bbb91e36da425f55efce72cccb3a82df1d265.png",
-        "fileHash": "sha256-c41fce22e7d7d4cb21be17fd96abfef6fb818b4c31dda91716afc3665cc49702",
+        "fileHash": "sha256-f5705add089e17d2f4c11c45afc24bed14acad21a366f7652403f81ba0c6cc4b",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
         "fileSize": 97650,
@@ -579,7 +579,7 @@
         "tvTypes": [
             "Live"
         ],
-        "version": 53,
+        "version": 52,
         "internalName": "SKTechProvider",
         "description": "Watch Live sports and TV channels via SK Tech",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/SKTechProvider.cs3",
@@ -587,7 +587,7 @@
     },
     {
         "iconUrl": "https://sportzxlive.com/wp-content/uploads/2026/04/cropped-logo-1-2048x1611-1-1024x806.png",
-        "fileHash": "sha256-fcf1a9729b9520aab0a07b437a4370fcc7eea913e186ffd1731dbf5d97c5a31f",
+        "fileHash": "sha256-dcdb86fce7488004aa3c24c32e77b2f642c02f2805d9ac37686f75fab97f5c02",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
         "fileSize": 92700,
@@ -599,7 +599,7 @@
         "tvTypes": [
             "Live"
         ],
-        "version": 18,
+        "version": 17,
         "internalName": "SportzxProvider",
         "description": "Watch Live Sports Events via SportzX",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/SportzxProvider.cs3",
@@ -607,7 +607,7 @@
     },
     {
         "iconUrl": "https://play-lh.googleusercontent.com/7geBQBtW_yN70BU81Oi2SoZvYsj5VoYrI4FmUNdqWQlchtExJb7XE_1BQysGzgJ6mBU",
-        "fileHash": "sha256-3942771c05d1e975d9185e831083e3f29389372a785c4f875542a6731e57a5a7",
+        "fileHash": "sha256-5151f366ea91418fda0be6b6f50d79dabbb9beda585f360eda83f2232dc8395d",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
         "fileSize": 42970,
@@ -621,15 +621,15 @@
             "TvSeries",
             "Anime"
         ],
-        "version": 33,
+        "version": 32,
         "internalName": "StreamFlixProvider",
         "description": "StreamFlix Multi Language Movies and Series Provider",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/StreamFlixProvider.cs3",
         "name": "StreamFlixProvider"
     },
     {
-        "iconUrl": "https://github.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/SubscriptionManager/icon.png",
-        "fileHash": "sha256-e07d8596ec9c8867c6fd99537a08e89097a92e90ba7e9e0f020f2ebda3837f4b",
+        "iconUrl": "https://github.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/CNC%20Verse/icon.png",
+        "fileHash": "sha256-9dead79e8aba71f58e50787366ebdcd497f148cb5e340828bda944c9b73c6998",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
         "fileSize": 15670,
@@ -641,7 +641,7 @@
         "tvTypes": [
             "Settings"
         ],
-        "version": 15,
+        "version": 14,
         "internalName": "SubscriptionManager",
         "description": "Subscription Management",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/SubscriptionManager.cs3",
@@ -649,7 +649,7 @@
     },
     {
         "iconUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/TamilDhoolProvider/icon.png",
-        "fileHash": "sha256-2ef4c8630dce693c5896731632caa4baf661d7d721b97f7664cdb1d3a3ba0aa9",
+        "fileHash": "sha256-e384a2fbdf01e8fc8b06aa0e2ba6153631725da4ac1058ebab6d746f9f62e2b2",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
         "fileSize": 20638,
@@ -661,7 +661,7 @@
         "tvTypes": [
             "TvSeries"
         ],
-        "version": 36,
+        "version": 35,
         "internalName": "TamilDhoolProvider",
         "description": "Tamil Tv Serial/Shows Provider",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/TamilDhoolProvider.cs3",
@@ -669,7 +669,7 @@
     },
     {
         "iconUrl": "https://www.google.com/s2/favicons?domain=tamilian.io&sz=%size%",
-        "fileHash": "sha256-141d7153ed7f2d539567e9997ddb9fb536b4e7933c4fed42b68771b8755f99a4",
+        "fileHash": "sha256-43e7e11a6c1e0d08e91969f3a8611b8b9d768e9409f72bcd27666bfc3c230d02",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
         "fileSize": 15628,
@@ -681,7 +681,7 @@
         "tvTypes": [
             "Movies"
         ],
-        "version": 31,
+        "version": 30,
         "internalName": "Tamilian",
         "description": "Movies (Tamil)",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/Tamilian.cs3",
@@ -689,7 +689,7 @@
     },
     {
         "iconUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/TamilUltraProvider/icon.png",
-        "fileHash": "sha256-ad8f197cf189224d324008448af48789c140fca47597a5bfa0b4fa46c58ff334",
+        "fileHash": "sha256-3a52038437829ed93401f39033a3f733c36c934389f0ba3525562ecf56d05922",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
         "fileSize": 12749,
@@ -701,7 +701,7 @@
         "tvTypes": [
             "Live"
         ],
-        "version": 39,
+        "version": 38,
         "internalName": "TamilUltraProvider",
         "description": "Indian Live TV Provider",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/TamilUltraProvider.cs3",
@@ -709,7 +709,7 @@
     },
     {
         "iconUrl": "https://editorialge.com/wp-content/uploads/2023/07/Watch32..jpg",
-        "fileHash": "sha256-dcb342afb015fe5d61adf222c57cb324ff19a893ee7b347161f745ac5bb07155",
+        "fileHash": "sha256-0e716231cc29b8bb35044e802f3a41db1ebed8f2ac2c6a50a4d65f38ae9959d7",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
         "fileSize": 28461,
@@ -722,7 +722,7 @@
             "Movie",
             "TvSeries"
         ],
-        "version": 33,
+        "version": 32,
         "internalName": "Watch32",
         "description": "Watch32 is a Free Movies streaming site with over 10000 movies and TV-Series.",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/Watch32.cs3",
@@ -730,10 +730,10 @@
     },
     {
         "iconUrl": "https://play-lh.googleusercontent.com/zVq_wAus2snoO-ggyI6IomlsCzfybAozQOGYpBrv71r1--rOYOYWsr_N7DWwVp9t7ro=s248-rw",
-        "fileHash": "sha256-a0bbf6b6b3e1b79f44b4d9e3eba89ea4baf9a06ac87c31396b0867a0866aa036",
+        "fileHash": "sha256-0f452406724a4fc56851cf0dbf015517f31bec2666c477ab647f72c720ee8075",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
-        "fileSize": 41048,
+        "fileSize": 41047,
         "status": 1,
         "language": "en",
         "authors": [
@@ -744,7 +744,7 @@
             "Movie",
             "Anime"
         ],
-        "version": 34,
+        "version": 33,
         "internalName": "XonProvider",
         "description": "Xon Provider for Anime and Cartoons - Tamil, Hindi, Telugu, English, Japanese",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/XonProvider.cs3",

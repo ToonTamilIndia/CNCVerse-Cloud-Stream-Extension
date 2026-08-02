@@ -1,4 +1,4 @@
-version = 8
+version = 7
 
 
 cloudstream {
@@ -8,5 +8,5 @@ cloudstream {
     status = 1
     tvTypes = listOf("Anime", "TvSeries")
     requiresResources = false
-    iconUrl = "https://github.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/AniKoto/icon.png"
+    iconUrl = "https://anikototv.to/AnikotoTheme/assets/images/favicon.png"
 }

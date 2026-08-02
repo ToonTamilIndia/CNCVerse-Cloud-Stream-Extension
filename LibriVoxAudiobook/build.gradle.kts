@@ -1,4 +1,4 @@
-version = 32
+version = 31
 
 
 cloudstream {
@@ -8,5 +8,5 @@ cloudstream {
     status = 1
     tvTypes = listOf("Audiobook")
     requiresResources = false
-    iconUrl = "https://github.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/LibriVoxAudiobook/icon.png"
+    iconUrl = "https://librivox.org/wp-content/themes/librivox/images/librivox-logo.png"
 }

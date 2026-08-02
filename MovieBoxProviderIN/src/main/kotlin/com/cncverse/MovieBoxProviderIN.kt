@@ -65,7 +65,7 @@ class MovieBoxProviderIN : MainAPI() {
         fun setBearerToken(token: String?) { bearerToken = token }
     }
 
-    override var mainUrl = "https://api3.aoneroom.com"
+    override var mainUrl = "https://apig.inmoviebox.com"
     override var name = "MovieBoxIN"
     override val hasMainPage = true
     override var lang = "ta"

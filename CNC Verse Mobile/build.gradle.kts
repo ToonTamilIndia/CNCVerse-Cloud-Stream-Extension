@@ -1,4 +1,4 @@
-version = 83
+version = 7
 
 
 dependencies {
@@ -20,5 +20,5 @@ cloudstream {
 
     requiresResources = true
 
-    iconUrl = "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/CNC%20Verse%20Mobile/icon.png"
+    iconUrl = "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/CNC%20Verse%20Mobile/logo.jpeg"
 }

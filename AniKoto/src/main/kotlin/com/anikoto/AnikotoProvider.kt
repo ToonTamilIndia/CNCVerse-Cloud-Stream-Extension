@@ -146,10 +146,6 @@ class AnikotoProvider : MainAPI() {
                     val hasSub = el.attr("data-sub") == "1"
                     val hasDub = el.attr("data-dub") == "1"
 
-                    val malId = el.attr("data-mal")
-                    val slug = el.attr("data-slug")
-                    val timestamp = el.attr("data-timestamp")
-
                     val epName = el.selectFirst(".d-title")?.text()?.trim()
                         ?.takeIf { it.isNotBlank() }
                         ?: el.attr("data-jp").takeIf { it.isNotBlank() }
@@ -157,7 +153,7 @@ class AnikotoProvider : MainAPI() {
 
                     if (hasSub || !hasDub) {
                         subEpisodes.add(
-                            newEpisode("anikoto|$url|$dataIds|sub|$malId|$slug|$timestamp") {
+                            newEpisode("anikoto|$url|$dataIds|sub") {
                                 episode = epNum
                                 name = epName
                             }
@@ -165,7 +161,7 @@ class AnikotoProvider : MainAPI() {
                     }
                     if (hasDub) {
                         dubEpisodes.add(
-                            newEpisode("anikoto|$url|$dataIds|dub|$malId|$slug|$timestamp") {
+                            newEpisode("anikoto|$url|$dataIds|dub") {
                                 episode = epNum
                                 name = epName
                             }
@@ -217,56 +213,9 @@ class AnikotoProvider : MainAPI() {
         val serverIds = parts[2]
         val audioType = parts[3]
         val isSub = audioType == "sub"
-        val malId = parts.getOrNull(4)
-        val slug = parts.getOrNull(5)
-        val timestamp = parts.getOrNull(6)
         val referer = "$animeUrl/"
 
         var found = false
-
-        if (!malId.isNullOrBlank() && !slug.isNullOrBlank() && !timestamp.isNullOrBlank()) {
-            try {
-                val mapperJson = getWithFallback(
-                    "https://mapper.nekostream.site/api/mal/$malId/$slug/$timestamp",
-                    headers = ajaxHeaders(referer),
-                    referer = referer
-                ).text
-                val mapperRoot = parseJson<Map<String, Any>>(mapperJson)
-                mapperRoot.forEach { (serverName, value) ->
-                    if (serverName == "status") return@forEach
-                    val serverMap = value as? Map<*, *> ?: return@forEach
-                    val typeEntry = serverMap[audioType] as? Map<*, *> ?: return@forEach
-
-                    val linkId = typeEntry["url"] as? String
-                    if (!linkId.isNullOrBlank()) {
-                        val loaded = resolveServerLink(
-                            linkId,
-                            referer,
-                            audioType,
-                            subtitleCallback,
-                            callback
-                        )
-                        if (loaded) found = true
-                        return@forEach
-                    }
-
-                    (typeEntry["download"] as? Map<*, *>)?.forEach { (_, dl) ->
-                        val dlUrl = dl as? String ?: return@forEach
-                        if (dlUrl.contains(".m3u8", ignoreCase = true)) {
-                            val loaded = resolveM3u8Direct(
-                                serverName,
-                                dlUrl,
-                                referer,
-                                subtitleCallback,
-                                callback
-                            )
-                            if (loaded) found = true
-                        }
-                    }
-                }
-            } catch (_: Exception) {
-            }
-        }
 
         if (serverIds.isNotBlank()) {
             try {

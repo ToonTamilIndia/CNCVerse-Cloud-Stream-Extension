@@ -1,4 +1,4 @@
-﻿package com.cncverse
+package com.cncverse
 
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
@@ -150,7 +150,11 @@ class TamilDhoolProvider : MainAPI() { // all providers must be an instance of M
                         thiraione.joinToString { it.sourceName },
                         thiraione.joinToString { it.sourceLink }
                             .replace("/p/", "/v/") + ".m3u8",
-                        type = ExtractorLinkType.M3U8)
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = "$mainUrl/"
+                        this.headers = mapOf("Referer" to "$mainUrl/")
+                    }
                 )
             }
             if (dailymotion.joinToString().isNotBlank()) {

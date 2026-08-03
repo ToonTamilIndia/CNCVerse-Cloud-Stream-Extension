@@ -225,6 +225,10 @@ open class DisneyStudioProvider(
         callback.invoke(
             newExtractorLink(name, name, videoLink, type = ExtractorLinkType.M3U8) {
                 this.referer = referer
+                this.headers = mapOf(
+                    "Referer" to referer,
+                    "Cookie" to "hd=on"
+                )
             }
         )
 

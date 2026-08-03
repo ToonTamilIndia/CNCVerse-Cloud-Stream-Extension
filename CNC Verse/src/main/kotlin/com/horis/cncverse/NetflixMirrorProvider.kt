@@ -1,4 +1,4 @@
-﻿package com.horis.cncverse
+package com.horis.cncverse
 
 import android.content.Context
 import android.content.Intent
@@ -259,6 +259,10 @@ class NetflixMirrorProvider : MainAPI() {
         callback.invoke(
             newExtractorLink(name, name, videoLink, type = ExtractorLinkType.M3U8) {
                 this.referer = referer
+                this.headers = mapOf(
+                    "Referer" to referer,
+                    "Cookie" to "hd=on"
+                )
             }
         )
 

@@ -1,4 +1,4 @@
-﻿
+
 package com.cncverse
 
 
@@ -157,6 +157,7 @@ class TamilUltraProvider : MainAPI() { // all providers must be an instance of M
             {
                 this.quality = Qualities.Unknown.value
                 this.referer = "https://tamilultra.co.uk/"
+                this.headers = mapOf("Referer" to "https://tamilultra.co.uk/")
             }
         )
 

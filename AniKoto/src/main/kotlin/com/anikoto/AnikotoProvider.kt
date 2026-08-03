@@ -6,6 +6,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.loadExtractor
+import com.lagradost.nicehttp.NiceResponse
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
@@ -15,6 +16,15 @@ private const val ANIKOTO_UA = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWe
 class AnikotoProvider : MainAPI() {
     companion object {
         var context: android.content.Context? = null
+
+        private val DOMAINS = listOf(
+            "https://anikototv.to",
+            "https://anikoto.bz",
+            "https://anikoto.cz",
+            "https://anikoto.me",
+            "https://anikoto.net",
+            "https://anikototv.se",
+        )
     }
 
     override var mainUrl = "https://anikototv.to"
@@ -47,20 +57,52 @@ class AnikotoProvider : MainAPI() {
         "Referer" to referer
     )
 
+    private fun hostOf(url: String): String = Regex("""^https?://([^/]+)""").find(url)?.groupValues?.get(1) ?: ""
+
+    private fun swapHost(url: String, host: String): String =
+        url.replaceFirst(Regex("""^https?://[^/]+"""), host)
+
+    private suspend fun getWithFallback(
+        url: String,
+        headers: Map<String, String> = emptyMap(),
+        referer: String? = null
+    ): NiceResponse {
+        val host = hostOf(url)
+        val hosts = mutableListOf(mainUrl)
+        DOMAINS.filter { it != mainUrl }.forEach { hosts.add(it) }
+
+        if (host.isBlank() || DOMAINS.any { host == hostOf(it) }) {
+            val basePath = if (host.isBlank()) url else url.substringAfter(host)
+            var lastError: Exception? = null
+            for (candidateHost in hosts) {
+                try {
+                    val candidate = "$candidateHost$basePath"
+                    val ref = referer?.let { swapHost(it, candidateHost) }
+                    val resp = app.get(candidate, headers = headers, referer = ref)
+                    if (resp.code < 500) return resp
+                } catch (e: Exception) {
+                    lastError = e
+                }
+            }
+            throw lastError ?: Exception("All domains failed for $url")
+        }
+        return app.get(url, headers = headers, referer = referer)
+    }
+
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val doc = app.get("${request.data}?page=$page", headers = browserHeaders).document
+        val doc = getWithFallback("${request.data}?page=$page", headers = browserHeaders).document
         val items = doc.select("div.item, div.flw-item").mapNotNull { it.toSearchResult() }
         return newHomePageResponse(request.name, items)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
         val encoded = URLEncoder.encode(query, "UTF-8")
-        val doc = app.get("$mainUrl/filter?keyword=$encoded", headers = browserHeaders).document
+        val doc = getWithFallback("$mainUrl/filter?keyword=$encoded", headers = browserHeaders).document
         return doc.select("div.item, div.flw-item").mapNotNull { it.toSearchResult() }
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val doc = app.get(url, headers = browserHeaders).document
+        val doc = getWithFallback(url, headers = browserHeaders).document
 
         val title = doc.selectFirst("#w-info h1.title, h1[itemprop=name], .title[itemprop=name]")
             ?.text()?.trim()
@@ -90,7 +132,7 @@ class AnikotoProvider : MainAPI() {
 
         if (animeId != null) {
             try {
-                val jsonText = app.get(
+                val jsonText = getWithFallback(
                     "$mainUrl/ajax/episode/list/$animeId",
                     headers = ajaxHeaders(url),
                     referer = url
@@ -184,7 +226,7 @@ class AnikotoProvider : MainAPI() {
 
         if (!malId.isNullOrBlank() && !slug.isNullOrBlank() && !timestamp.isNullOrBlank()) {
             try {
-                val mapperJson = app.get(
+                val mapperJson = getWithFallback(
                     "https://mapper.nekostream.site/api/mal/$malId/$slug/$timestamp",
                     headers = ajaxHeaders(referer),
                     referer = referer
@@ -228,7 +270,7 @@ class AnikotoProvider : MainAPI() {
 
         if (serverIds.isNotBlank()) {
             try {
-                val serverListText = app.get(
+                val serverListText = getWithFallback(
                     "$mainUrl/ajax/server/list?servers=$serverIds",
                     headers = ajaxHeaders(referer),
                     referer = referer
@@ -279,7 +321,7 @@ class AnikotoProvider : MainAPI() {
             if (linkId.startsWith("http")) {
                 return resolveEmbedInline(linkId, referer, audioType, subtitleCallback, callback)
             }
-            val serverText = app.get(
+            val serverText = getWithFallback(
                 "$mainUrl/ajax/server?get=$linkId",
                 headers = ajaxHeaders(referer),
                 referer = referer
@@ -298,7 +340,7 @@ class AnikotoProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val doc = try {
-            app.get(episodeUrl, headers = browserHeaders).document
+            getWithFallback(episodeUrl, headers = browserHeaders).document
         } catch (_: Exception) {
             return false
         }
@@ -312,7 +354,7 @@ class AnikotoProvider : MainAPI() {
         val audioType = if (episodeUrl.contains("/dub/", ignoreCase = true)) "dub" else "sub"
 
         val epListText = try {
-            app.get(
+            getWithFallback(
                 "$mainUrl/ajax/episode/list/$animeId",
                 headers = ajaxHeaders(episodeUrl),
                 referer = episodeUrl
@@ -331,9 +373,10 @@ class AnikotoProvider : MainAPI() {
         val serverIds = targetEp.attr("data-ids").takeIf { it.isNotBlank() } ?: return false
 
         val serverListText = try {
-            app.get(
+            getWithFallback(
                 "$mainUrl/ajax/server/list?servers=$serverIds",
-                headers = ajaxHeaders("$episodeUrl/")
+                headers = ajaxHeaders("$episodeUrl/"),
+                referer = "$episodeUrl/"
             ).text
         } catch (_: Exception) {
             return false
@@ -464,10 +507,17 @@ class AnikotoProvider : MainAPI() {
         type: String,
         ref: String
     ): String? {
+        val ajaxHeaders = mapOf(
+            "User-Agent" to ANIKOTO_UA,
+            "Accept" to "*/*",
+            "X-Requested-With" to "XMLHttpRequest",
+            "Origin" to host,
+            "Referer" to ref,
+        )
         try {
             val jsonText = app.get(
                 "$host/stream/getSources?id=$streamId&type=$type",
-                headers = mapOf("Referer" to ref),
+                headers = ajaxHeaders,
                 referer = ref
             ).text
             if (jsonText.isNotBlank()) return jsonText
@@ -476,7 +526,7 @@ class AnikotoProvider : MainAPI() {
         return try {
             app.get(
                 "$host/stream/getSourcesNew?id=$streamId&id=$streamId&type=$type&type=$type",
-                headers = mapOf("Referer" to ref),
+                headers = ajaxHeaders,
                 referer = ref
             ).text
         } catch (_: Exception) {

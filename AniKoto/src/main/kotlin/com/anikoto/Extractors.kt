@@ -68,10 +68,18 @@ open class MegaPlay : ExtractorApi() {
 
             val type = if (url.contains("/dub", ignoreCase = true)) "dub" else "sub"
 
+            val ajaxHeaders = mapOf(
+                "User-Agent" to MP_UA,
+                "Accept" to "*/*",
+                "X-Requested-With" to "XMLHttpRequest",
+                "Origin" to host,
+                "Referer" to url,
+            )
+
             val jsonText = try {
                 app.get(
                     "$host/stream/getSources?id=$streamId&type=$type",
-                    headers = mapOf("Referer" to url),
+                    headers = ajaxHeaders,
                     referer = url
                 ).text
             } catch (_: Exception) {
@@ -79,7 +87,7 @@ open class MegaPlay : ExtractorApi() {
             } ?: try {
                 app.get(
                     "$host/stream/getSourcesNew?id=$streamId&id=$streamId&type=$type&type=$type",
-                    headers = mapOf("Referer" to url),
+                    headers = ajaxHeaders,
                     referer = url
                 ).text
             } catch (_: Exception) {

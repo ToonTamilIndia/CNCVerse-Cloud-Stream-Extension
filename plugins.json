@@ -1,10 +1,10 @@
 [
     {
         "iconUrl": "https://anikototv.to/AnikotoTheme/assets/images/favicon.png",
-        "fileHash": "sha256-0003cfdf6b44b24cf5ce4afe4300f8cbfb416606831a3db0f46bad84f84c26fc",
+        "fileHash": "sha256-6bf0f0b1586aab79b0212edb2d64a69a75d6f204a5c5cbf6dbf6522df8247415",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
-        "fileSize": 55954,
+        "fileSize": 52436,
         "status": 1,
         "language": "en",
         "authors": [
@@ -22,10 +22,10 @@
     },
     {
         "iconUrl": "https://t2.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://animesuge.cz&size=64",
-        "fileHash": "sha256-615a061a26f35d45032f88cc8cca32e827ff97c7a99062d5ad2a0c222284bea2",
+        "fileHash": "sha256-e68eddd54f9053abf4fba96f484abe517d7a7ff03d7695ceff8fa0c120951664",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
-        "fileSize": 31363,
+        "fileSize": 33327,
         "status": 1,
         "language": "en",
         "authors": [
@@ -108,10 +108,10 @@
     },
     {
         "iconUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/CNC%20Verse/icon.png",
-        "fileHash": "sha256-01126363fb38bffdd44fbdc3cb942d9ec31056c8bdb83a23d7560d62506fe557",
+        "fileHash": "sha256-f0e042dda19747895041e83c987c2259c9c13e1d4f79f91820c7cf615daf8b32",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
-        "fileSize": 83722,
+        "fileSize": 83834,
         "status": 1,
         "language": "ta",
         "authors": [
@@ -121,7 +121,7 @@
             "Movie",
             "TvSeries"
         ],
-        "version": 107,
+        "version": 108,
         "internalName": "CNC Verse",
         "description": "Netflix, PrimeVideo, Disney+ Hotstar Contents in Multiple Languages",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/CNC Verse.cs3",
@@ -129,10 +129,10 @@
     },
     {
         "iconUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/CNC%20Verse%20Mobile/logo.jpeg",
-        "fileHash": "sha256-a2111f66dc610694e7b3104d834525cdafe6475d55da166b5ea35d56a64e22d0",
+        "fileHash": "sha256-2c6b1b3c3ed16e2934a6d3e8b4d815240244c8edd791869b42dc4576ba24860b",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
-        "fileSize": 80822,
+        "fileSize": 80911,
         "status": 1,
         "language": "ta",
         "authors": [
@@ -231,7 +231,7 @@
     },
     {
         "iconUrl": "https://www.google.com/s2/favicons?domain=goldenaudiobook.com/&sz=%size%",
-        "fileHash": "sha256-fb37f02e11a8472d1114c4e7c8c8096053e0eca0436f06f608a7d4992cdfb975",
+        "fileHash": "sha256-22197c282f4904089394c9dadeda72d3bad6df804ee4c253832567054f192411",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
         "fileSize": 14669,
@@ -243,7 +243,7 @@
         "tvTypes": [
             "Others"
         ],
-        "version": 30,
+        "version": 31,
         "internalName": "GoldenAudiobook",
         "description": "Audiobooks - Use Picture in Picture or VLC as external player",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/GoldenAudiobook.cs3",
@@ -419,7 +419,7 @@
     },
     {
         "iconUrl": "https://movielinkbd.one/img/favicon-192x192.png",
-        "fileHash": "sha256-8f0297abc4f76343fed795f800523764c8485c089faaffc5e621d2bd3ce32c9c",
+        "fileHash": "sha256-36cac17c99279d242de7d7d26578c4f44473a82a86b5f27f6473da560911c4f1",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
         "fileSize": 37149,
@@ -434,7 +434,7 @@
             "AnimeMovie",
             "AsianDrama"
         ],
-        "version": 15,
+        "version": 16,
         "internalName": "MovieLinkBDProvider",
         "description": "MovieLinkBD - Largest Movie Download Site in Bangladesh",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/MovieLinkBDProvider.cs3",
@@ -543,10 +543,10 @@
     },
     {
         "iconUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/Rtally/icon.png",
-        "fileHash": "sha256-bb6234653631330501b45a8bfe4fcefb1e927631e6211dfd13400dd1a3cafb92",
+        "fileHash": "sha256-7b69af454f4ebade7b33df101796af42696ce9393d9e0d71ed1bab93b51c462e",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
-        "fileSize": 15312,
+        "fileSize": 15311,
         "status": 1,
         "language": "en",
         "authors": [
@@ -559,7 +559,7 @@
             "AnimeMovie",
             "AsianDrama"
         ],
-        "version": 46,
+        "version": 47,
         "internalName": "Rtally",
         "description": "Movie and TV Series provider",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/Rtally.cs3",
@@ -649,10 +649,10 @@
     },
     {
         "iconUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/TamilDhoolProvider/icon.png",
-        "fileHash": "sha256-e384a2fbdf01e8fc8b06aa0e2ba6153631725da4ac1058ebab6d746f9f62e2b2",
+        "fileHash": "sha256-907974ea1907c7b62702766e6eda60328adf61e09ac926490911fd6047c19904",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
-        "fileSize": 20638,
+        "fileSize": 21016,
         "status": 1,
         "language": "ta",
         "authors": [
@@ -689,10 +689,10 @@
     },
     {
         "iconUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/TamilUltraProvider/icon.png",
-        "fileHash": "sha256-3a52038437829ed93401f39033a3f733c36c934389f0ba3525562ecf56d05922",
+        "fileHash": "sha256-82efce02b4b742542b8163ff97353adb44e99a6439727e52edac809627159af4",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension",
-        "fileSize": 12749,
+        "fileSize": 12826,
         "status": 1,
         "language": "ta",
         "authors": [

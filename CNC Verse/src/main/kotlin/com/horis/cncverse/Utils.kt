@@ -313,33 +313,41 @@ suspend fun getNewTvUserToken(apiBase: String, ott: String, forceRefresh: Boolea
         "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.Gatu v1.0"
     )
 
-    val otpResponse = try {
+    var otpResponse = try {
         app.get("$apiBase/newtv/otp.php", otpHeaders).parsedSafe<NewTvOtpResponse>()
     } catch (e: Exception) {
         null
     }
 
     if (otpResponse?.status == "error" && otpResponse.error_msg == "Invalid OTP, Please Enter Valid OTP") {
-        val tvHtml = fetchNetmirrorTvHtml()
-        val otpMatch = Regex("""(?m)^\s*const\s+otp\s*=\s*\[(.*?)]""").find(tvHtml)
-        if (otpMatch != null) {
-            val newOtp = Regex("""\s*,\s*""").replace(otpMatch.groupValues[1], "").replace(" ", "")
-            if (newOtp.isNotEmpty()) {
-                currentOtp = newOtp
-                NetflixMirrorStorage.saveOtp(currentOtp)
-                otpHeaders["otp"] = currentOtp
-                val retryResponse = try {
-                    app.get("$apiBase/newtv/otp.php", otpHeaders).parsedSafe<NewTvOtpResponse>()
-                } catch (e: Exception) {
-                    null
+        val maxCaptchaAttempts = 3
+        var attempt = 1
+        while (true) {
+            val tvHtml = fetchNetmirrorTvHtml()
+            val otpMatch = Regex("""(?m)^\s*const\s+otp\s*=\s*\[(.*?)]""").find(tvHtml)
+            if (otpMatch != null) {
+                val newOtp = Regex("""\s*,\s*""").replace(otpMatch.groupValues[1], "").replace(" ", "")
+                if (newOtp.isNotEmpty()) {
+                    currentOtp = newOtp
+                    NetflixMirrorStorage.saveOtp(currentOtp)
+                    otpHeaders["otp"] = currentOtp
+                    otpResponse = try {
+                        app.get("$apiBase/newtv/otp.php", otpHeaders).parsedSafe<NewTvOtpResponse>()
+                    } catch (e: Exception) {
+                        null
+                    }
                 }
-                val newToken = retryResponse?.usertoken.orEmpty()
-                if (newToken.isNotEmpty()) {
-                    NetflixMirrorStorage.saveUserToken(ott, newToken)
-                }
-                return newToken
             }
+            NetflixMirrorStorage.clearCfCookie()
+            if (attempt >= maxCaptchaAttempts) break
+            delay(500L)
+            attempt++
         }
+        val newToken = otpResponse?.usertoken.orEmpty()
+        if (newToken.isNotEmpty()) {
+            NetflixMirrorStorage.saveUserToken(ott, newToken)
+        }
+        return newToken
     }
     val newToken = otpResponse?.usertoken.orEmpty()
     if (newToken.isNotEmpty()) {

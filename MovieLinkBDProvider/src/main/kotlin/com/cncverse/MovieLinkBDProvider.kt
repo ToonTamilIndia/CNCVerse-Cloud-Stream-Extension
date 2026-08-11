@@ -20,14 +20,20 @@ import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
+import com.lagradost.cloudstream3.utils.loadExtractor
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONObject
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
+import org.jsoup.nodes.Element
 import java.net.URI
 import java.util.concurrent.TimeUnit
 
@@ -258,18 +264,73 @@ class MovieLinkBDProvider : MainAPI() {
         }.trim()
 
         val isSeries = url.contains("/series/") || url.contains("/anime/")
-        val linkAnchors = doc.select("a[href*='/getLink/']")
-        val watchAnchors = doc.select("a[href*='/getWatch/']")
+
+        val jsonSources = mutableListOf<StreamSource>()
+        try {
+            val script = doc.selectFirst("script#mlbdInlinePlayerData")
+            if (script != null && script.data().isNotEmpty()) {
+                val jsonObj = JSONObject(script.data())
+                val episodes = jsonObj.optJSONArray("episodes")
+                if (episodes != null) {
+                    for (i in 0 until episodes.length()) {
+                        try {
+                            val ep = episodes.getJSONObject(i)
+                            val epKey = ep.optString("id", "movie")
+                            val epLabel = ep.optString("label", "Movie")
+                            val sources = ep.optJSONArray("sources") ?: continue
+                            for (j in 0 until sources.length()) {
+                                val src = sources.getJSONObject(j)
+                                val watchUrl = src.optString("url", "")
+                                if (watchUrl.isNotEmpty()) {
+                                    jsonSources.add(
+                                        StreamSource(
+                                            src.optInt("quality", 0),
+                                            watchUrl,
+                                            src.optString("name", ""),
+                                            epKey,
+                                            epLabel
+                                        )
+                                    )
+                                }
+                            }
+                        } catch (_: Exception) {}
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        val fileAnchors = doc.select("a[href*='/file/']").filterNot { isComingSoon(it) }
+        val linkAnchors = doc.select("a[href*='/getLink/']").filterNot { isComingSoon(it) }
+        val watchAnchors = doc.select("a[href*='/getWatch/']").filterNot { isComingSoon(it) }
+        val liveServerAnchors = doc.select("a.mlbd-live-server-btn[href]")
+
+        fun anchorLink(a: Element): String {
+            val href = a.attr("abs:href").ifEmpty {
+                val h = a.attr("href"); if (h.startsWith("http")) h else "$base$h"
+            }
+            return "${extractQualityLabel(a.text())}|${fixUrlDomain(href, base)}|$url"
+        }
+
+        fun liveServerLink(a: Element): String? {
+            val h = a.attr("href").trim()
+            if (h.isEmpty()) return null
+            val absH = if (h.startsWith("http")) h else "$base$h"
+            var label = a.text().trim()
+            if (label.isEmpty()) label = "Stream"
+            var ql = extractQualityLabel(label)
+            if (ql.isEmpty()) ql = label.take(30)
+            return "$ql|ext:$absH|$url"
+        }
 
         if (!isSeries) {
-            val linksData = (linkAnchors + watchAnchors).mapNotNull { a ->
-                val href = a.attr("abs:href").ifEmpty {
-                    val h = a.attr("href"); if (h.startsWith("http")) h else "$base$h"
-                }
-                val fixedHref = fixUrlDomain(href, base)
-                val quality = extractQualityLabel(a.text())
-                "$quality|$fixedHref|$url"
-            }.joinToString(" ; ")
+            val items = mutableListOf<String>()
+            for (src in jsonSources) {
+                items.add("${qualityFromInt(src.quality)}|watch:${src.url}|$url")
+            }
+            for (a in fileAnchors) items.add(anchorLink(a))
+            for (a in linkAnchors + watchAnchors) items.add(anchorLink(a))
+            for (a in liveServerAnchors) liveServerLink(a)?.let { items.add(it) }
+            val linksData = items.joinToString(" ; ")
 
             return newMovieLoadResponse(rawTitle, url, TvType.Movie, linksData) {
                 this.posterUrl = poster
@@ -280,43 +341,88 @@ class MovieLinkBDProvider : MainAPI() {
         }
 
         val episodesData = mutableListOf<Episode>()
-        val epCards = doc.select("div.ep-card, [data-ep]")
 
-        if (epCards.isNotEmpty()) {
+        if (jsonSources.isNotEmpty()) {
+            val grouped = jsonSources.groupBy { it.episodeKey }
+            for ((epKey, srcs) in grouped) {
+                val epNum = Regex("\\d+").find(epKey)?.value?.toIntOrNull() ?: 1
+                val epLabel = srcs.firstOrNull()?.episodeLabel?.takeIf { it.isNotBlank() }
+                    ?: "Episode $epNum"
+                val epData = srcs.map { "${qualityFromInt(it.quality)}|watch:${it.url}|$url" }
+                    .joinToString(" ; ")
+                episodesData.add(newEpisode(epData) {
+                    this.name = epLabel
+                    this.season = 1
+                    this.episode = epNum
+                })
+            }
+        }
+
+        if (episodesData.isEmpty()) {
+            val epCards = doc.select("div.ep-card, [data-ep]")
             epCards.forEach { card ->
                 val epText = card.attr("data-ep").ifEmpty {
                     card.selectFirst("h1, h2, h3, h4, h5, h6")?.text() ?: ""
                 }
                 val epNum = Regex("\\d+").find(epText)?.value?.toIntOrNull() ?: 1
                 val cardLinks = card.select("a[href*='/getLink/'], a[href*='/getWatch/']")
+                    .filterNot { isComingSoon(it) }
                 if (cardLinks.isNotEmpty()) {
-                    val epUrl = cardLinks.mapNotNull { a ->
-                        val href = a.attr("abs:href").ifEmpty {
-                            val h = a.attr("href"); if (h.startsWith("http")) h else "$base$h"
+                    val epUrl = cardLinks.map { anchorLink(it) }.joinToString(" ; ")
+                    mergeEpisode(episodesData, epNum, epUrl)
+                }
+            }
+        }
+
+        if (episodesData.isEmpty()) {
+            val episodeSections = doc.select(
+                "div.episode-section, div.season-section, h3:contains(Episode), h4:contains(Episode), " +
+                    "h5:contains(Episode), div[class*='episode'], div[class*='season'], " +
+                    "strong:contains(Ep), b:contains(Ep)"
+            )
+            val epRangeRegex = Regex("(?:Ep|Episode)[^\\d]*(\\d+)(?:[^\\d]+(\\d+))?", RegexOption.IGNORE_CASE)
+            for (section in episodeSections) {
+                val epRange = epRangeRegex.find(section.text())
+                val start = epRange?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 1
+                val end = epRange?.groupValues?.getOrNull(2)?.toIntOrNull() ?: start
+
+                val sectionLinks = mutableListOf<String>()
+                var sib = section.nextElementSibling()
+                while (sib != null && !Regex("h[1-6]").matches(sib.tagName())) {
+                    val anchors = mutableListOf<Element>()
+                    if (sib.tagName() == "a") {
+                        val h = sib.attr("href")
+                        if ((h.contains("/getLink/") || h.contains("/getWatch/")) && !isComingSoon(sib)) {
+                            anchors.add(sib)
                         }
-                        val fixed = fixUrlDomain(href, base)
-                        "${extractQualityLabel(a.text())}|$fixed|$url"
-                    }.joinToString(" ; ")
-                    episodesData.add(newEpisode(epUrl) {
-                        this.name = "Episode $epNum"
-                        this.season = 1
-                        this.episode = epNum
-                    })
+                    }
+                    anchors.addAll(
+                        sib.select("a[href*='/getLink/'], a[href*='/getWatch/']").filterNot { isComingSoon(it) }
+                    )
+                    sectionLinks.addAll(anchors.map { anchorLink(it) })
+                    sib = sib.nextElementSibling()
+                }
+
+                if (sectionLinks.isNotEmpty()) {
+                    val epUrl = sectionLinks.joinToString(" ; ")
+                    for (epNum in start..end) {
+                        mergeEpisode(episodesData, epNum, epUrl)
+                    }
                 }
             }
         }
 
         if (episodesData.isEmpty() && linkAnchors.isNotEmpty()) {
-            val allLinks = (linkAnchors + watchAnchors).mapNotNull { a ->
-                val href = a.attr("abs:href").ifEmpty {
-                    val h = a.attr("href"); if (h.startsWith("http")) h else "$base$h"
-                }
-                val fixed = fixUrlDomain(href, base)
-                "${extractQualityLabel(a.text())}|$fixed|$url"
-            }.joinToString(" ; ")
+            val allDownload = (linkAnchors + watchAnchors).map { anchorLink(it) }
+            val allLive = liveServerAnchors.mapNotNull { liveServerLink(it) }
+            val allLinks = (allDownload + allLive).joinToString(" ; ")
             episodesData.add(newEpisode(allLinks) {
                 this.name = "Full Season"; this.season = 1; this.episode = 1
             })
+        }
+
+        if (episodesData.size > 1) {
+            episodesData.sortWith(compareBy { it.episode })
         }
 
         return newTvSeriesLoadResponse(rawTitle, url, TvType.TvSeries, episodesData) {
@@ -336,42 +442,54 @@ class MovieLinkBDProvider : MainAPI() {
     ): Boolean {
         if (!data.contains("|")) return false
         val base = getBase()
-        val items = data.split(" ; ").map { item ->
-            val parts = item.split("|")
-            Triple(
-                parts.getOrNull(0)?.trim() ?: "",
-                parts.getOrNull(1)?.trim() ?: item.trim(),
-                parts.getOrNull(2)?.trim() ?: ""
-            )
-        }
-        items.forEach { (qualityLabel, linkUrl, refererUrl) ->
-            if (linkUrl.isEmpty()) return@forEach
-            when {
-                linkUrl.contains("/getLink/") -> {
-                    resolveGetLink(linkUrl, qualityLabel, refererUrl.ifEmpty { mainUrl }, callback)
+        coroutineScope {
+            data.split(" ; ").map { item ->
+                async {
+                    try {
+                        val parts = item.split("|")
+                        val qualityLabel = parts.getOrNull(0)?.trim() ?: ""
+                        val linkUrl = parts.getOrNull(1)?.trim()?.takeIf { it.isNotEmpty() }
+                            ?: item.trim()
+                        if (linkUrl.isEmpty()) return@async
+                        val refererUrl = parts.getOrNull(2)?.trim()?.let { fixUrlDomain(it, base) }
+                            ?: base
+                        val fixedLink = fixUrlDomain(linkUrl, base)
+                        when {
+                            fixedLink.contains("/getLink/") -> {
+                                resolveGetLink(fixedLink, qualityLabel, refererUrl, callback)
+                            }
+                            fixedLink.contains("/getWatch/") -> {
+                                resolveGetWatch(fixedLink, qualityLabel, refererUrl, callback)
+                            }
+                            fixedLink.contains("/file/") -> {
+                                resolveDirectFile(fixedLink, qualityLabel, refererUrl, callback)
+                            }
+                            fixedLink.startsWith("watch:") -> {
+                                resolveWatchUrl(
+                                    fixedLink.removePrefix("watch:"),
+                                    qualityLabel,
+                                    refererUrl,
+                                    subtitleCallback,
+                                    callback
+                                )
+                            }
+                            fixedLink.startsWith("ext:") -> {
+                                val extUrl = fixedLink.removePrefix("ext:")
+                                if (extUrl.contains("xcloud") || extUrl.contains("mcloud")) {
+                                    resolveXCloud(extUrl, qualityLabel, callback)
+                                } else {
+                                    try {
+                                        loadExtractor(extUrl, refererUrl, subtitleCallback, callback)
+                                    } catch (_: Exception) {}
+                                }
+                            }
+                            else -> {
+                                loadExtractor(fixedLink, refererUrl, subtitleCallback, callback)
+                            }
+                        }
+                    } catch (_: Exception) {}
                 }
-                linkUrl.contains("/getWatch/") -> {
-                    resolveGetWatch(linkUrl, qualityLabel, refererUrl.ifEmpty { mainUrl }, callback)
-                }
-                linkUrl.contains("/file/") -> {
-                    resolveDirectFile(linkUrl, qualityLabel, refererUrl.ifEmpty { mainUrl }, callback)
-                }
-                linkUrl.contains("xcloud") -> {
-                    resolveXCloud(linkUrl, qualityLabel, callback)
-                }
-                else -> {
-                    val quality = labelToQuality(qualityLabel)
-                    callback(ExtractorLink(
-                        source = name,
-                        name = "$name [$qualityLabel]",
-                        url = linkUrl,
-                        referer = mainUrl,
-                        quality = quality,
-                        type = ExtractorLinkType.VIDEO,
-                        headers = headers
-                    ))
-                }
-            }
+            }.awaitAll()
         }
         return true
     }
@@ -526,6 +644,58 @@ class MovieLinkBDProvider : MainAPI() {
         } catch (_: Exception) { }
     }
 
+    // ── Resolve a watch: URL (inline player data) to stream URL ─────────────
+    private suspend fun resolveWatchUrl(
+        watchUrl: String,
+        qualityLabel: String,
+        refererUrl: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        try {
+            if (watchUrl.contains(".m3u8") || watchUrl.contains(".mp4") || watchUrl.contains(".mkv")) {
+                val type = if (watchUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                val quality = labelToQuality(qualityLabel)
+                callback(ExtractorLink(
+                    source = name,
+                    name = "$name [$qualityLabel]",
+                    url = watchUrl,
+                    referer = refererUrl,
+                    quality = quality,
+                    type = type,
+                    headers = headers + mapOf("Referer" to refererUrl)
+                ))
+                return
+            }
+
+            val html = httpGetText(watchUrl, headers + mapOf("Referer" to refererUrl))
+            val unescaped = html.replace("\\/", "/")
+            val srcRegex = Regex("const\\s+SRC\\s*=\\s*[\"'](https?://[^\"']+)[\"']")
+            val m3u8Regex = Regex("(https?://[^\\s'\"<>]+\\.m3u8[^\\s'\"<>]*)")
+            val mp4Regex = Regex("(https?://[^\\s'\"<>]+\\.(?:mp4|mkv)[^\\s'\"<>]*)")
+
+            val streamUrl = srcRegex.find(unescaped)?.groupValues?.get(1)
+                ?: m3u8Regex.find(unescaped)?.value
+                ?: mp4Regex.find(unescaped)?.value
+
+            if (!streamUrl.isNullOrEmpty()) {
+                val type = if (streamUrl.contains("m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                val quality = labelToQuality(qualityLabel)
+                callback(ExtractorLink(
+                    source = name,
+                    name = "$name [$qualityLabel]",
+                    url = streamUrl,
+                    referer = refererUrl,
+                    quality = quality,
+                    type = type,
+                    headers = headers + mapOf("Referer" to refererUrl)
+                ))
+            } else {
+                loadExtractor(watchUrl, refererUrl, subtitleCallback, callback)
+            }
+        } catch (_: Exception) {}
+    }
+
     // ── Resolve XCloud player URL ───────────────────────────────────────────
     private suspend fun resolveXCloud(
         xcloudUrl: String,
@@ -676,6 +846,43 @@ class MovieLinkBDProvider : MainAPI() {
             label.contains("480", true) -> Qualities.P480.value
             label.contains("360", true) -> Qualities.P360.value
             else -> Qualities.Unknown.value
+        }
+    }
+
+    private data class StreamSource(
+        val quality: Int,
+        val url: String,
+        val name: String,
+        val episodeKey: String,
+        val episodeLabel: String
+    )
+
+    private fun isComingSoon(a: Element): Boolean {
+        val t = a.text().trim().lowercase()
+        return t.contains("coming soon") || t == "soon" || t.contains("not available")
+    }
+
+    private fun qualityFromInt(q: Int): String {
+        return when {
+            q >= 2160 -> "4K"
+            q >= 1080 -> "1080p"
+            q >= 720 -> "720p"
+            q >= 480 -> "480p"
+            q >= 360 -> "360p"
+            else -> "Stream"
+        }
+    }
+
+    private fun mergeEpisode(episodesData: MutableList<Episode>, epNum: Int, epUrl: String) {
+        val existing = episodesData.firstOrNull { it.episode == epNum && it.season == 1 }
+        if (existing != null) {
+            existing.data = if (existing.data.isNullOrEmpty()) epUrl else "${existing.data} ; $epUrl"
+        } else {
+            episodesData.add(newEpisode(epUrl) {
+                this.name = "Episode $epNum"
+                this.season = 1
+                this.episode = epNum
+            })
         }
     }
 }

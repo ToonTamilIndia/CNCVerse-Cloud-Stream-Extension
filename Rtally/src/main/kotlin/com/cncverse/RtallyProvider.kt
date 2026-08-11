@@ -1,4 +1,5 @@
 ﻿package com.cncverse
+
 import com.lagradost.cloudstream3.Episode
 import com.lagradost.cloudstream3.HomePageResponse
 import com.lagradost.cloudstream3.LoadResponse
@@ -19,20 +20,13 @@ import com.lagradost.cloudstream3.newTvSeriesLoadResponse
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import org.jsoup.nodes.Element
-import android.content.Intent
-import android.net.Uri
-import android.os.Handler
-import android.os.Looper
-import com.lagradost.cloudstream3.ui.settings.Globals.TV
-import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
-
-
+import java.net.URLDecoder
 
 class RtallyProvider : MainAPI() {
     companion object {
         var context: android.content.Context? = null
     }
-    
+
     override var mainUrl = "https://www.rtally.shop"
     override var name = "Rtally"
     override var lang = "ta"
@@ -63,7 +57,6 @@ class RtallyProvider : MainAPI() {
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
-        
         val doc = app.get(
             "$mainUrl${request.data}?page=$page",
             cacheTime = 60,
@@ -76,16 +69,13 @@ class RtallyProvider : MainAPI() {
     private fun toResult(post: Element): SearchResponse {
         val title = post.select("h4").text()
         val url = mainUrl + post.attr("href")
-        // Try to get image from img tag first, fallback to background-image style
-        var posterUrl = post.select("img").attr("src")
+        var posterUrl = extractImageUrl(post.select("img").attr("src"))
         if (posterUrl.isNullOrEmpty()) {
             val styleAttr = post.select("div[style*=background-image]").attr("style")
             posterUrl = styleAttr.substringAfter("url(").substringBefore(")").substringBefore("?")
         }
         val language = post.select("div.absolute.bottom-2.left-2").text()
-        val rating = post.select("div.absolute.bottom-2.right-2").text()
-        val type = post.select("h5.border").text()
-        
+
         return newAnimeSearchResponse(title, url, TvType.Movie) {
             this.posterUrl = posterUrl
             addDubStatus(
@@ -102,8 +92,17 @@ class RtallyProvider : MainAPI() {
         }
     }
 
+    private fun extractImageUrl(url: String?): String? {
+        if (url.isNullOrEmpty()) return url
+        if (!url.contains("url=")) return url
+        return try {
+            URLDecoder.decode(url.substringAfter("url=").substringBefore("&"), "UTF-8")
+        } catch (e: Exception) {
+            url
+        }
+    }
+
     override suspend fun search(query: String): List<SearchResponse> {
-        
         val doc = app.get(
             "$mainUrl/search/$query",
             cacheTime = 60,
@@ -113,69 +112,83 @@ class RtallyProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        
         val doc = app.get(
             url,
             cacheTime = 60,
             headers = headers
         ).document
-        val title = doc.select(".font-serif").text()
-        // Try to get image from img tag first, fallback to background-image style
-        var image = doc.selectFirst(".w-\\[200px\\] > img:nth-child(1)")?.attr("src")
+        val title = doc.selectFirst("h1.font-josefn, h1[class*='font-josefn']")?.text()?.trim()
+            ?: doc.title().substringBefore("|").trim()
+        var image = extractImageUrl(doc.selectFirst(".w-\\[200px\\] img, article img")?.attr("src"))
         if (image.isNullOrEmpty()) {
             val styleAttr = doc.select("div[style*=background-image]").first()?.attr("style")
             image = styleAttr?.substringAfter("url(")?.substringBefore(")")?.substringBefore("?")
         }
-        val plot = doc.selectFirst("p.text-sm:nth-child(2)")?.text()
-        val year = doc.select("div.infoDiv:nth-child(7) > span:nth-child(2)").text().toIntOrNull()
-        val recommendations = doc.select(".gap-8").mapNotNull {
-            val link = it.select("a")
-            newMovieSearchResponse(link.text(), link.attr("href"), TvType.Movie)
-            {
-                this.posterUrl = it.select("img").attr("src")
+        val plot = doc.selectFirst("p.mt-2, article p[class*='text-sm']")?.text()
+        val year = doc.select("div.infoDiv span:last-child, .infoDiv span")
+            .mapNotNull { it.text().trim().toIntOrNull() }
+            .firstOrNull()
+        val recommendations = doc.select("div.grid a[href*='/post/']").mapNotNull { a ->
+            val recTitle = a.selectFirst("h4")?.text()?.trim() ?: return@mapNotNull null
+            val recUrl = if (a.attr("href").startsWith("http")) a.attr("href") else mainUrl + a.attr("href")
+            newMovieSearchResponse(recTitle, recUrl, TvType.Movie) {
+                this.posterUrl = extractImageUrl(a.selectFirst("img")?.attr("src"))
             }
         }
-        val episode = doc.select("ul.flex > li")
-        if (episode.isNotEmpty()) {
+        val episodeDivs = doc.select("div[id^='episode-']")
+        if (episodeDivs.isNotEmpty()) {
             val episodesData = mutableListOf<Episode>()
-            val scriptHtml = doc.select("script").joinToString { it.html() }.replace("\\", "")
-            val linkList: MutableList<String> = mutableListOf()
-            doc.select("div.justify-center:nth-child(2) > a").forEach {
-                val link = it.attr("href")
-                when {
-                    //Filemoon
-                    link.contains("filemoon") -> extractFileMoonUrls(scriptHtml)?.split(",")
-                        ?.forEachIndexed { index, id ->
-                            if (index in linkList.indices) {
-                                linkList[index] += "https://filemoon.sx/e/$id ; "
-                            } else {
-                                linkList.add("https://filemoon.sx/e/$id ; ")
-                            }
+            episodeDivs.forEach { epDiv ->
+                val epNum = Regex("\\d+").find(epDiv.attr("id"))?.value?.toIntOrNull()
+                if (epNum != null) {
+                    val qualityLinks = mutableListOf<String>()
+                    epDiv.select("a[href*='/redirect?']").forEach { a ->
+                        val qualityLabel = a.text().trim().uppercase()
+                        val actualUrl = extractRedirectLink(a.attr("href"))
+                        if (actualUrl != null) {
+                            qualityLinks.add("$qualityLabel|${embedify(actualUrl)}")
                         }
-                    //Vidhideplus
-                    link.contains("vidhideplus") -> extractVidhideplus(scriptHtml)?.split(",")
-                        ?.forEachIndexed { index, id ->
-                            if (index in linkList.indices) {
-                                linkList[index] += "https://vidhideplus.com/v/$id ; "
-                            } else {
-                                linkList.add("https://vidhideplus.com/v/$id ; ")
-                            }
-                        }
-                    //StreamWish
-                    link.contains("wish") -> extractStreamwishUrls(scriptHtml)?.split(",")
-                        ?.forEachIndexed { index, id ->
-                            if (index in linkList.indices) {
-                                linkList[index] += "https://playerwish.com/e/$id ; "
-                            } else {
-                                linkList.add("https://playerwish.com/e/$id ; ")
-                            }
-                        }
+                    }
+                    if (qualityLinks.isNotEmpty()) {
+                        val epData = qualityLinks.joinToString(" ; ")
+                        episodesData.add(newEpisode(epData) {
+                            this.name = "Episode $epNum"
+                            this.season = 1
+                            this.episode = epNum
+                        })
+                    }
                 }
             }
-            linkList.forEachIndexed {index, it ->
-                episodesData.add(
-                    newEpisode(it)
-                )
+            val streamLinks = mutableListOf<String>()
+            doc.select("a[target='_blank'][href]").forEach { a ->
+                val href = a.attr("href")
+                if (href.startsWith("http") && !href.contains("rtally") && !href.contains("facebook.com") &&
+                    !href.contains("t.me") && !href.contains("telegram") && !href.contains("google.com")
+                ) {
+                    val lbl = a.selectFirst("span[class*='font-bold'], span")?.text()?.trim()
+                        ?.takeIf { it.isNotEmpty() } ?: "Stream"
+                    streamLinks.add("$lbl|${embedify(href)}")
+                }
+            }
+            if (streamLinks.isNotEmpty()) {
+                val streamData = streamLinks.joinToString(" ; ")
+                val ep1 = episodesData.firstOrNull { it.episode == 1 && it.season == 1 }
+                if (ep1 != null) {
+                    if (ep1.data.isNullOrEmpty()) {
+                        ep1.data = streamData
+                    } else {
+                        ep1.data += " ; $streamData"
+                    }
+                } else {
+                    episodesData.add(newEpisode(streamData) {
+                        this.name = "Episode 1"
+                        this.season = 1
+                        this.episode = 1
+                    })
+                }
+            }
+            if (episodesData.size > 1) {
+                episodesData.sortWith(compareBy { it.episode })
             }
             return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodesData) {
                 this.posterUrl = image
@@ -183,13 +196,27 @@ class RtallyProvider : MainAPI() {
                 this.year = year
                 this.recommendations = recommendations
             }
-
         } else {
-            var links = ""
-            doc.select("div.justify-center:nth-child(2) > a").forEach {
-                links += downloadToEmbedUrl(it)
+            val links = mutableListOf<String>()
+            doc.select("section a[href*='/download/']").forEach { a ->
+                val href = a.attr("href")
+                if (!href.contains("/redirect?")) {
+                    val quality = href.substringAfterLast("/").uppercase()
+                    val absHref = if (href.startsWith("http")) href else mainUrl + href
+                    links.add("$quality|dlpage:$absHref")
+                }
             }
-            return newMovieLoadResponse(title, url, TvType.Movie, links) {
+            doc.select("a[target='_blank'][href]").forEach { a ->
+                val href = a.attr("href")
+                if (href.startsWith("http") && href.contains("rtally") && !href.contains("facebook.com") &&
+                    !href.contains("t.me") && !href.contains("telegram") && !href.contains("google.com")
+                ) {
+                    val lbl = a.selectFirst("span[class*='font-bold'], span")?.text()?.trim()
+                        ?.takeIf { it.isNotEmpty() } ?: "Stream"
+                    links.add("$lbl|${embedify(href)}")
+                }
+            }
+            return newMovieLoadResponse(title, url, TvType.Movie, links.joinToString(" ; ")) {
                 this.posterUrl = image
                 this.plot = plot
                 this.year = year
@@ -198,37 +225,47 @@ class RtallyProvider : MainAPI() {
         }
     }
 
-    private fun downloadToEmbedUrl(urlElement: Element): String {
-        val url = urlElement.attr("href")
-        return when {
-            //Filemoon
-            url.contains("filemoon") -> url.replace("/download/", "/e/") + " ; "
-            //Vidhideplus
-            url.contains("vidhideplus") -> url.replace("/download/", "/v/") + " ; "
-            //Vidhidepre
-            url.contains("vidhidepre") -> url.replace("/d/", "/v/") + " ; "
-            //StreamWish
-            url.contains("playerwish") -> url.replace("/d/", "/e/") + " ; "
-            else -> url + " ; "
+    private fun extractRedirectLink(href: String): String? {
+        if (!href.contains("/redirect?")) return null
+        return try {
+            URLDecoder.decode(href.substringAfter("link=").substringBefore("&"), "UTF-8")
+        } catch (e: Exception) {
+            null
         }
     }
 
-    private val fileMoonRegex = Regex("\"multiLinksDl\":\\s*\"([^\"]+)\"")
-    private fun extractFileMoonUrls(text: String): String? {
-        val fileMoonMatch = fileMoonRegex.find(text)
-        return fileMoonMatch?.groupValues?.getOrNull(1)
+    private fun embedify(url: String): String {
+        return when {
+            url.contains("vidhideplus.com/d/") -> url.replace("/d/", "/v/")
+            url.contains("vidhidepre.com/d/") -> url.replace("/d/", "/v/")
+            url.contains("playerwish.com/d/") || url.contains("filemoon.sx/d/") -> url.replace("/d/", "/e/")
+            url.contains("filemoon.sx/download/") -> url.replace("/download/", "/e/")
+            else -> url
+        }
     }
 
-    private val streamwishMultiUrlRegex = Regex("\"streamwishMultiUrl\":\\s*\"([^\"]+)\"")
-    private fun extractStreamwishUrls(text: String): String? {
-        val streamwishMultiUrlMatch = streamwishMultiUrlRegex.find(text)
-        return streamwishMultiUrlMatch?.groupValues?.getOrNull(1)
-    }
-
-    private val vidhideplusRegex = Regex("\"multiLinksSl\":\\s*\"([^\"]+)\"")
-    private fun extractVidhideplus(text: String): String? {
-        val vidhideplusMatch = vidhideplusRegex.find(text)
-        return vidhideplusMatch?.groupValues?.getOrNull(1)
+    private suspend fun resolveDownloadPage(
+        dlPageUrl: String,
+        qualityLabel: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val doc = try {
+            app.get(dlPageUrl, headers = headers).document
+        } catch (e: Exception) {
+            return
+        }
+        doc.select("a[target='_blank'][href]").forEach { a ->
+            val href = a.attr("href")
+            try {
+                if (href.startsWith("http") && !href.contains("rtally") && !href.contains("facebook.com") &&
+                    !href.contains("t.me") && !href.contains("telegram") && !href.contains("google.com")
+                ) {
+                    loadExtractor(embedify(href), subtitleCallback, callback)
+                }
+            } catch (e: Exception) {
+            }
+        }
     }
 
     override suspend fun loadLinks(
@@ -237,16 +274,20 @@ class RtallyProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        data.split(" ; ").forEach {
-            loadExtractor(
-                it,
-                subtitleCallback,
-                callback
-            )
+        data.split(" ; ").forEach { item ->
+            val parts = item.split("|")
+            val linkUrl = if (parts.size >= 2) parts[1].trim() else item.trim()
+            if (linkUrl.startsWith("dlpage:")) {
+                val dlPage = linkUrl.removePrefix("dlpage:")
+                val qualityLabel = parts.getOrNull(0) ?: ""
+                resolveDownloadPage(dlPage, qualityLabel, subtitleCallback, callback)
+            } else if (linkUrl.isNotEmpty()) {
+                try {
+                    loadExtractor(linkUrl, subtitleCallback, callback)
+                } catch (e: Exception) {
+                }
+            }
         }
         return true
     }
-
-
-
 }

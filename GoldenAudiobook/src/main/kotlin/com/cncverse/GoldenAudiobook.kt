@@ -53,15 +53,30 @@ class GoldenAudiobook : MainAPI() { // all providers must be an instance of Main
     private fun Element.toSearchResult(): AnimeSearchResponse? {
         val href = fixUrl(this.selectFirst("a[title]")?.attr("href") ?: return null)
         val title = this.selectFirst("h2")?.text() ?: return null
-        val posterUrl = fixUrlNull(this.selectFirst("img")?.attr("data-src"))
+        val posterUrl = fixUrlNull(this.extractPosterUrl())
         return newAnimeSearchResponse(title, href, TvType.Anime) { this.posterUrl = posterUrl }
     }
 
     private fun Element.toManualSearchResult(): AnimeSearchResponse? {
         val href = fixUrl(this.selectFirst("a[title]")?.attr("href") ?: return null)
         val title = this.selectFirst("h2")?.text() ?: return null
-        val posterUrl = fixUrlNull(this.selectFirst("img")?.attr("src"))
+        val posterUrl = fixUrlNull(this.extractPosterUrl())
         return newAnimeSearchResponse(title, href, TvType.Anime) { this.posterUrl = posterUrl }
+    }
+
+    private fun Element.extractPosterUrl(): String? {
+        for (img in select("img")) {
+            val lazySrc = img.attr("data-lazy-src").takeIf { it.isNotBlank() && !it.startsWith("data:") }
+            if (lazySrc != null) return fixUrl(lazySrc)
+            val dataSrc = img.attr("data-src").takeIf { it.isNotBlank() && !it.startsWith("data:") }
+            if (dataSrc != null) return fixUrl(dataSrc)
+            val src = img.attr("src").takeIf { it.isNotBlank() && !it.startsWith("data:") }
+            if (src != null) return fixUrl(src)
+        }
+        val noscriptSrc = selectFirst("noscript img")?.attr("src")
+            ?.takeIf { it.isNotBlank() && !it.startsWith("data:") }
+        if (noscriptSrc != null) return fixUrl(noscriptSrc)
+        return null
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
@@ -78,9 +93,8 @@ class GoldenAudiobook : MainAPI() { // all providers must be an instance of Main
 
         val title = document.selectFirst("h1")?.text()?.trim() ?: return null
 
-        val poster =
-                document.selectFirst("figure img[decoding]")?.attr("data-lazy-src")
-                        ?: "https://librivox.org/images/librivox-logo.png"
+        val poster = document.extractPosterUrl()
+                ?: "https://librivox.org/images/librivox-logo.png"
 
         val tvType = TvType.TvSeries
 

@@ -11,29 +11,20 @@ import kotlinx.coroutines.runBlocking
 class SportzxPlugin : Plugin() {
     private val sharedPref = activity?.getSharedPreferences("SportzX", Context.MODE_PRIVATE)
 
-    // IPTV providers fetched dynamically from the API categories
+    // IPTV/VOD providers fetched dynamically from the API categories
     private var iptvProviders: List<Map<String, Any>> = emptyList()
 
     override fun load(context: Context) {
         SportzxLiveEventsProvider.context = context
         SportzxProvider.context          = context
 
-        // Always register the Live Events provider first (unremovable)
+        // Always register the Live Events providers first (unremovable)
         registerMainAPI(SportzxLiveEventsProvider())
+        registerMainAPI(SportzxLiveEventsProvider("🎬SportzX Highlights", "highlights.json"))
 
-        // Fetch IPTV providers from the Sportzx categories API
+        // Fetch providers once from the Sportzx categories API
         iptvProviders = runBlocking {
             SportzxProviderManager.fetchProviders()
-        }
-
-        // Register VOD providers
-        val vodProviders = runBlocking {
-            SportzxProviderManager.fetchProviders()
-        }
-        vodProviders.forEach { provider ->
-            val title   = provider["title"] as String
-            val catLink = provider["catLink"] as String
-            registerMainAPI(SportzxVODProvider(title, catLink))
         }
 
         val providerSettings = iptvProviders.mapNotNull { provider ->
@@ -49,7 +40,13 @@ class SportzxPlugin : Plugin() {
         selectedProviders.forEach { provider ->
             val title   = provider["title"] as String
             val catLink = provider["catLink"] as String
-            registerMainAPI(SportzxProvider(title, catLink))
+            val displayTitle = "📺 $title"
+            if (catLink.startsWith("http", ignoreCase = true)) {
+                registerMainAPI(SportzxProvider(displayTitle, catLink))
+            } else {
+                SportzxVODProvider.context = context
+                registerMainAPI(SportzxVODProvider(displayTitle, catLink))
+            }
         }
 
         val activity = context as AppCompatActivity

@@ -340,17 +340,31 @@ override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    /** Parses `url|Header1=val1|Header2=val2` format. */
+    /** Parses `url|Header1=val1&Header2=val2` format. */
     private fun parseStreamLink(link: String): Pair<String, Map<String, String>> {
-        val parts = link.split("|")
-        var url = parts.firstOrNull()?.trim() ?: ""
+        if (!link.contains("|")) return link to emptyMap()
+        val parts = link.split("|", limit = 2)
+        var url = parts[0].trim()
         url = url.replace("%2F", "/")
-        val headers = parts.drop(1).mapNotNull { part ->
-            val eq = part.indexOf('=')
-            if (eq > 0) part.substring(0, eq).trim() to part.substring(eq + 1).trim()
-            else null
-        }.toMap()
-        return url to headers
+        if (parts.size > 1) {
+            val headerPairs = parts[1].split("&")
+            val headers = headerPairs.mapNotNull { headerPair ->
+                val keyValue = headerPair.split("=", limit = 2)
+                if (keyValue.size != 2) return@mapNotNull null
+                val key = keyValue[0].trim()
+                val value = keyValue[1].trim()
+                val headerName = when (key.lowercase()) {
+                    "cookie" -> "Cookie"
+                    "origin" -> "Origin"
+                    "user-agent" -> "User-Agent"
+                    "referer" -> "Referer"
+                    else -> key
+                }
+                headerName to value
+            }.toMap()
+            return url to headers
+        }
+        return url to emptyMap()
     }
 
     private fun hexToBase64(hex: String): String {

@@ -88,11 +88,40 @@ class PlayZTV(
     }
 
     private suspend fun getWithCustomHeaders(url: String): String {
+        var finalUrl = url
+        var hasCustomHeaders = false
+        val dynamicHeaders = headers.toMutableMap()
+
+        if (url.contains("|")) {
+            val parts = url.split("|", limit = 2)
+            finalUrl = parts[0]
+            val headersPart = parts[1]
+            val headerPairs = headersPart.split("&")
+            for (pair in headerPairs) {
+                val kv = pair.split("=", limit = 2)
+                if (kv.size != 2) continue
+                val key = kv[0].trim()
+                val value = kv[1].trim()
+                val existingKey = dynamicHeaders.keys.firstOrNull { it.equals(key, ignoreCase = true) }
+                if (existingKey != null) dynamicHeaders.remove(existingKey)
+                dynamicHeaders[key] = value
+                hasCustomHeaders = true
+            }
+        }
+
         val request = Request.Builder()
-            .url(url)
+            .url(finalUrl)
             .build()
 
-        return customHttpClient.newCall(request).execute().use { response ->
+        val client = if (hasCustomHeaders) {
+            OkHttpClient.Builder()
+                .addInterceptor(HeaderReplacementInterceptor(dynamicHeaders))
+                .build()
+        } else {
+            customHttpClient
+        }
+
+        return client.newCall(request).execute().use { response ->
             response.body.string()
         }
     }

@@ -163,7 +163,8 @@ class SportzxLiveEventsProvider(
     // ── Main page ─────────────────────────────────────────────────────────────
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val events = SportzxProviderManager.fetchLiveEvents()
+        val events = if (customLink != null) SportzxProviderManager.fetchLiveEvents(customLink)
+        else SportzxProviderManager.fetchLiveEvents()
 
         val grouped = events.groupBy { it.eventInfo?.eventCat ?: it.cat ?: "Other" }
 
@@ -243,7 +244,8 @@ class SportzxLiveEventsProvider(
     // ── Search ────────────────────────────────────────────────────────────────
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val events = SportzxProviderManager.fetchLiveEvents()
+        val events = if (customLink != null) SportzxProviderManager.fetchLiveEvents(customLink)
+        else SportzxProviderManager.fetchLiveEvents()
         return events.filter { event ->
             listOfNotNull(
                 event.title,

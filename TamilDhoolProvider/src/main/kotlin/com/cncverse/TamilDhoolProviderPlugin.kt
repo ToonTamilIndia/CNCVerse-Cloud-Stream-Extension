@@ -13,5 +13,6 @@ class TamilDhoolProviderPlugin: Plugin() {
         registerMainAPI(TamilDhoolProvider())
         registerExtractorAPI(YoutubeExtractor())
         registerExtractorAPI(Dailymotion())
+        registerExtractorAPI(TeamsToday())
     }
 }

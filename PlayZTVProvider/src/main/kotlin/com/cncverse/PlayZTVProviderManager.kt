@@ -183,7 +183,8 @@ object PlayZTVProviderManager {
                                 "id" to (index + 1),
                                 "title" to cat.name,
                                 "image" to (cat.logo ?: ""),
-                                "catLink" to cat.api
+                                "catLink" to cat.api,
+                                "type" to (cat.type ?: "custom")
                             )
                         } else null
                     } catch (e: Exception) {

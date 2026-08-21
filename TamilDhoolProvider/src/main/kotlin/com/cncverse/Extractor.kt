@@ -4,7 +4,10 @@ import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.M3u8Helper.Companion.generateM3u8
+import com.lagradost.cloudstream3.utils.loadExtractor
+import com.lagradost.cloudstream3.utils.newExtractorLink
 import java.net.URI
 
 
@@ -71,5 +74,68 @@ open class Dailymotion : ExtractorApi() {
         callback: (ExtractorLink) -> Unit
     ) {
         return generateM3u8(name, streamLink, "").forEach(callback)
+    }
+}
+
+class TeamsToday : ExtractorApi() {
+    override val mainUrl = "https://teamstoday.com"
+    override val name = "TeamsToday"
+    override val requiresReferer = false
+    private val tamildhoolReferer = "https://www.tamildhool.tech/"
+
+    private val metaRefreshRegex = Regex("url=([^\"'\\s>]+)", RegexOption.IGNORE_CASE)
+    private val jwFileRegex = Regex("""file\s*:\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+    private val iframeSrcRegex = Regex("""<iframe[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+    private val rawM3u8Regex = Regex("""https?:\\?/\\?/[^\s"'<>\\]+\.m3u8""", RegexOption.IGNORE_CASE)
+
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val entryReferer = if (referer.isNullOrBlank()) tamildhoolReferer else referer
+
+        val teamstodayHtml = app.get(url, referer = entryReferer).text
+        val redirectTarget = metaRefreshRegex.find(teamstodayHtml)
+            ?.groupValues?.get(1)?.trim()?.let { unescapeUrl(it) }
+            ?.takeIf { it.startsWith("http") } ?: return
+
+        val destinationHtml = app.get(redirectTarget, referer = url).text
+        val directStream = findStreamUrl(destinationHtml)
+        if (directStream != null) {
+            newExtractorLink(name, name, directStream, ExtractorLinkType.M3U8) {
+                this.referer = redirectTarget
+            }?.let(callback)
+            return
+        }
+
+        val iframeSrc = iframeSrcRegex.find(destinationHtml)
+            ?.groupValues?.get(1)?.trim()?.let { unescapeUrl(it) }
+            ?.takeIf { it.startsWith("http") } ?: return
+
+        val iframeHtml = app.get(iframeSrc, referer = redirectTarget).text
+        val iframeStream = findStreamUrl(iframeHtml)
+        if (iframeStream != null) {
+            newExtractorLink(name, name, iframeStream, ExtractorLinkType.M3U8) {
+                this.referer = iframeSrc
+            }?.let(callback)
+            return
+        }
+
+        loadExtractor(iframeSrc, redirectTarget, subtitleCallback, callback)
+    }
+
+    private fun findStreamUrl(html: String): String? {
+        val jwFile = jwFileRegex.find(html)?.groupValues?.get(1)?.let { unescapeUrl(it) }
+            ?.takeIf { it.startsWith("http") && it.contains(".m3u8") }
+        if (jwFile != null) return jwFile
+
+        val raw = rawM3u8Regex.find(html)?.value ?: return null
+        return unescapeUrl(raw)
+    }
+
+    private fun unescapeUrl(raw: String): String {
+        return raw.trim().replace("\\/", "/").replace("\\u002F", "/")
     }
 }

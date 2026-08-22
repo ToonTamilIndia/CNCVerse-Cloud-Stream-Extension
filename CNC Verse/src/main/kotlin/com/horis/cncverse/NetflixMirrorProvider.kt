@@ -33,7 +33,7 @@ class NetflixMirrorProvider : MainAPI() {
     )
     override var lang = "ta"
 
-    override var mainUrl = "https://net52.cc"
+    override var mainUrl = "https://net77.cc"
     override var name = "Netflix"
 
     override val hasMainPage = true
@@ -271,14 +271,28 @@ class NetflixMirrorProvider : MainAPI() {
 
     @Suppress("ObjectLiteralToLambda")
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
+        val sessionCookie = buildList {
+            add("hd=on")
+            if (cookie_value.isNotEmpty()) add("t_hash_t=$cookie_value")
+        }.joinToString("; ")
+        val videoHeaders = mapOf(
+            "User-Agent" to (headers["User-Agent"] ?: USER_AGENT),
+            "Cookie" to sessionCookie
+        )
         return object : Interceptor {
             override fun intercept(chain: Interceptor.Chain): Response {
                 val request = chain.request()
-                if (request.url.toString().contains(".m3u8")) {
-                    val newRequest = request.newBuilder()
-                        .header("Cookie", "hd=on")
-                        .build()
-                    return chain.proceed(newRequest)
+                val url = request.url.toString()
+                if (url.contains(".m3u8") || url.contains(".ts") || url.contains(".mp4") ||
+                    url.contains("cdn") || url.contains("video")) {
+                    val builder = request.newBuilder()
+                    for ((key, value) in videoHeaders) {
+                        builder.header(key, value)
+                    }
+                    if (request.header("Referer").isNullOrBlank()) {
+                        builder.header("Referer", extractorLink.referer)
+                    }
+                    return chain.proceed(builder.build())
                 }
                 return chain.proceed(request)
             }

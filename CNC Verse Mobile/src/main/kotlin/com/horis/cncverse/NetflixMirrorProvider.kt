@@ -26,7 +26,7 @@ class NetflixMirrorProvider : MainAPI() {
     )
     override var lang = "ta"
 
-    override var mainUrl = "https://net52.cc"
+    override var mainUrl = "https://net77.cc"
     override var name = "NetflixM"
 
     override val hasMainPage = true
@@ -219,53 +219,44 @@ class NetflixMirrorProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val apiBase = resolveApiUrl()
-        val id = parseJson<LoadData>(data).id
-
-        var userToken = getNewTvUserToken(apiBase, "nf")
-        var response: NewTvPlayerResponse? = try {
-            app.get(
-                "$apiBase/newtv/player.php?id=$id",
-                headers = buildNewTvHeaders("nf", mapOf("Usertoken" to userToken))
-            ).parsedSafe<NewTvPlayerResponse>()
-        } catch (_: Exception) { null }
-
-        if (response?.status == "otp") {
-            userToken = getNewTvUserToken(apiBase, "nf", forceRefresh = true)
-            response = try {
-                app.get(
-                    "$apiBase/newtv/player.php?id=$id",
-                    headers = buildNewTvHeaders("nf", mapOf("Usertoken" to userToken))
-                ).parsedSafe<NewTvPlayerResponse>()
-            } catch (_: Exception) { null }
-        }
-
-        val videoLink = response?.video_link?.takeIf { it.isNotBlank() } ?: return false
-        val referer = response?.referer?.takeIf { it.isNotBlank() } ?: apiBase
-
-        callback.invoke(
-            newExtractorLink(name, name, videoLink, type = ExtractorLinkType.M3U8) {
-                this.referer = referer
-                this.headers = mapOf(
-                    "Referer" to referer,
-                    "Cookie" to "hd=on"
-                )
-            }
+        val ld = parseJson<LoadData>(data)
+        return netMirrorMobileLoadLinks(
+            mainUrl = mainUrl,
+            id = ld.id,
+            title = ld.title,
+            playlistPath = "/mobile/playlist.php",
+            baseCookies = mapOf("hd" to "on", "ott" to "nf"),
+            name = name,
+            subtitleCallback = subtitleCallback,
+            callback = callback
         )
-
-        return true
     }
 
     @Suppress("ObjectLiteralToLambda")
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
+        val sessionCookie = buildList {
+            add("hd=on")
+            add("ott=nf")
+            if (cookie_value.isNotEmpty()) add("t_hash_t=$cookie_value")
+        }.joinToString("; ")
+        val videoHeaders = mapOf(
+            "User-Agent" to NETMIRROR_MOBILE_UA,
+            "Cookie" to sessionCookie
+        )
         return object : Interceptor {
             override fun intercept(chain: Interceptor.Chain): Response {
                 val request = chain.request()
-                if (request.url.toString().contains(".m3u8")) {
-                    val newRequest = request.newBuilder()
-                        .header("Cookie", "hd=on")
-                        .build()
-                    return chain.proceed(newRequest)
+                val url = request.url.toString()
+                if (url.contains(".m3u8") || url.contains(".ts") || url.contains(".mp4") ||
+                    url.contains("cdn") || url.contains("video")) {
+                    val builder = request.newBuilder()
+                    for ((key, value) in videoHeaders) {
+                        builder.header(key, value)
+                    }
+                    if (request.header("Referer").isNullOrBlank()) {
+                        builder.header("Referer", extractorLink.referer)
+                    }
+                    return chain.proceed(builder.build())
                 }
                 return chain.proceed(request)
             }

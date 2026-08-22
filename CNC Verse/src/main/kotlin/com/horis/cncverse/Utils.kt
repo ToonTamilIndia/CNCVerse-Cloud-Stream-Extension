@@ -109,69 +109,204 @@ fun convertRuntimeToMinutes(runtime: String): Int {
     return totalMinutes
 }
 
+const val NETMIRROR_MOBILE_UA = "Mozilla/5.0 (Linux; Android 12; RMX2117 Build/SP1A.210812.016; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/147.0.7727.55 Mobile Safari/537.36 /OS.Gatu v3.0"
+
+// ── NetMirror mobile playlist models ────────────────────────────────────────
+
+data class NetMirrorPlaylistSource(
+    val file: String? = null,
+    val label: String? = null
+)
+
+data class NetMirrorPlaylistTrack(
+    val kind: String? = null,
+    val file: String? = null,
+    val label: String? = null
+)
+
+data class NetMirrorPlaylistItem(
+    val sources: List<NetMirrorPlaylistSource>? = null,
+    val tracks: List<NetMirrorPlaylistTrack>? = null
+)
+
+/**
+ * Resolves streams via the NetMirror mobile web API (playlist.php).
+ * The t_hash_t session cookie (from bypass()) is bound server-side into a
+ * per-request `in=` token; expired sessions yield `in=unknown::ni` URLs that
+ * 404, so we refresh the bypass cookie once and retry.
+ * Full session cookies are attached to every link so Cloudflare does not
+ * rate-limit segment requests mid-playback ("too many requests").
+ */
+suspend fun netMirrorMobileLoadLinks(
+    mainUrl: String,
+    id: String,
+    title: String,
+    playlistPath: String,
+    baseCookies: Map<String, String>,
+    name: String,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    var cookieValue = bypass(mainUrl)
+    if (cookieValue.isEmpty()) return false
+
+    val titleEnc = java.net.URLEncoder.encode(title, "UTF-8")
+    val referer = "$mainUrl/mobile/home?app=1"
+    val reqHeaders = mapOf(
+        "User-Agent" to NETMIRROR_MOBILE_UA,
+        "X-Requested-With" to "XMLHttpRequest",
+        "Accept" to "*/*",
+        "Referer" to referer
+    )
+    fun sessionCookies() = baseCookies + mapOf("t_hash_t" to cookieValue)
+    fun cookieHeader() = sessionCookies().entries.joinToString("; ") { "${it.key}=${it.value}" }
+
+    suspend fun fetchPlaylist(): NetMirrorPlaylistItem? {
+        return try {
+            val res = app.get(
+                "$mainUrl$playlistPath?id=$id&t=$titleEnc&tm=${APIHolder.unixTime}",
+                headers = reqHeaders,
+                cookies = sessionCookies(),
+                referer = referer,
+                timeout = 30
+            )
+            tryParseJson<List<NetMirrorPlaylistItem>>(res.text)?.firstOrNull()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    var item = fetchPlaylist()
+    var sources = item?.sources ?: emptyList()
+
+    if (sources.isEmpty() || sources.any { it.file?.contains("in=unknown") == true }) {
+        NetflixMirrorStorage.clearCookie()
+        cookieValue = bypass(mainUrl)
+        if (cookieValue.isEmpty()) return false
+        item = fetchPlaylist()
+        sources = item?.sources ?: emptyList()
+    }
+
+    if (sources.isEmpty()) return false
+
+    // Subtitles (protocol-relative URLs like //subscdn.top/...)
+    item?.tracks?.forEach { track ->
+        if (track.kind == "captions" && !track.file.isNullOrEmpty()) {
+            val subUrl = if (track.file!!.startsWith("http")) track.file else "https:${track.file}"
+            try {
+                subtitleCallback(SubtitleFile(track.label?.takeIf { it.isNotBlank() } ?: "English", subUrl))
+            } catch (_: Exception) { }
+        }
+    }
+
+    var emitted = false
+    for (src in sources) {
+        val file = src.file ?: continue
+        if (file.contains("in=unknown")) continue
+        val url = if (file.startsWith("http")) file else "$mainUrl$file"
+        val label = src.label?.takeIf { it.isNotBlank() } ?: "Auto"
+        callback.invoke(
+            newExtractorLink(name, "$label - $title", url, ExtractorLinkType.M3U8) {
+                this.referer = referer
+                this.headers = mapOf(
+                    "Referer" to referer,
+                    "User-Agent" to NETMIRROR_MOBILE_UA,
+                    "Cookie" to cookieHeader()
+                )
+            }
+        )
+        emitted = true
+    }
+    return emitted
+}
+
 suspend fun bypass(mainUrl: String): String {
     // Check persistent storage first
     val (savedCookie, savedTimestamp) = NetflixMirrorStorage.getCookie()
 
-    // Return cached cookie if valid (≤15 hours old)
-    if (!savedCookie.isNullOrEmpty() && System.currentTimeMillis() - savedTimestamp < 54_000_000) {
+    // Cookie Max-Age is 12h server-side
+    if (!savedCookie.isNullOrEmpty() && System.currentTimeMillis() - savedTimestamp < 43_200_000) {
         return savedCookie
     }
 
-    val newCookie = try {
-        val headers = mapOf(
-            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-            "Accept-Encoding" to "gzip, deflate, br, zstd",
-            "Accept-Language" to "en-US,en;q=0.9",
-            "Cache-Control" to "max-age=0",
-            "Connection" to "keep-alive",
-            "Content-Type" to "application/x-www-form-urlencoded",
-            "Origin" to "https://net22.cc",
-            "Referer" to "https://net22.cc/verify2",
-            "sec-ch-ua" to "\"Google Chrome\";v=\"147\", \"Not.A/Brand\";v=\"8\", \"Chromium\";v=\"147\"",
-            "sec-ch-ua-mobile" to "?0",
-            "sec-ch-ua-platform" to "\"Windows\"",
-            "Sec-Fetch-Dest" to "document",
-            "Sec-Fetch-Mode" to "navigate",
-            "Sec-Fetch-Site" to "same-origin",
-            "Sec-Fetch-User" to "?1",
-            "Upgrade-Insecure-Requests" to "1",
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
-        )
-        val formBody = FormBody.Builder()
-            .add("g-recaptcha-response", UUID.randomUUID().toString())
-            .build()
-        val client = app.baseClient.newBuilder()
-            .followRedirects(false)
-            .followSslRedirects(false)
-            .build()
-        val request = Request.Builder()
-            .url("https://net52.cc/verify.php")
-            .post(formBody)
-            .apply {
-                headers.forEach { (key, value) ->
-                    addHeader(key, value)
-                }
-            }
-            .build()
-        client.newCall(request).execute().use { response ->
-            response.headers("Set-Cookie")
-                .firstOrNull { it.startsWith("t_hash_t=") }
-                ?.substringAfter("t_hash_t=")
-                ?.substringBefore(";")
-                .orEmpty()
-        }
-    } catch (e: Exception) {
-        // Clear invalid cookie on failure
-        NetflixMirrorStorage.clearCookie()
-        throw e
-    }
+    // WITHOUT CF first: mobile-API verification flow (no captcha needed).
+    // 1. /mobile/home?app=1 -> data-addhash attribute
+    // 2. userver.<host>/?hee5=<addhash>&a=y&t=<rand> (registers the ad click)
+    // 3. poll POST /mobile/verify2.php (verify=<addhash>) until "All Done";
+    //    the successful response sets t_hash_t via Set-Cookie.
+    val newCookie = netMirrorMobileBypass(mainUrl)
 
-    // Persist the new cookie
     if (newCookie.isNotEmpty()) {
         NetflixMirrorStorage.saveCookie(newCookie)
+        return newCookie
     }
-    return newCookie
+
+    // WITH CF fallback: WebView captcha solve (Cloudflare challenge UI)
+    val wvCookie = solveBypassInWebView()
+    if (wvCookie.isNotEmpty()) {
+        NetflixMirrorStorage.saveCookie(wvCookie)
+        return wvCookie
+    }
+    return ""
+}
+
+private suspend fun netMirrorMobileBypass(mainUrl: String): String {
+    return try {
+        val host = mainUrl
+            .removePrefix("https://")
+            .removePrefix("http://")
+            .trimEnd('/')
+        val homeHeaders = mapOf(
+            "User-Agent" to NETMIRROR_MOBILE_UA,
+            "X-Requested-With" to "app.netmirror.netmirrornew"
+        )
+
+        // 1. Home page -> data-addhash
+        val homeRes = app.get("$mainUrl/mobile/home?app=1", headers = homeHeaders, timeout = 30)
+        if (homeRes.code != 200) return ""
+        val addhash = Regex("""data-addhash="([^"]+)"""").find(homeRes.text)?.groupValues?.get(1)
+            ?: return ""
+
+        // 2. Trigger verification helper; it redirects through an ad chain whose
+        // completion registers the click against our addhash.
+        try {
+            app.get(
+                "https://userver.$host/?hee5=${java.net.URLEncoder.encode(addhash, "UTF-8")}&a=y&t=${System.currentTimeMillis()}",
+                headers = mapOf(
+                    "User-Agent" to NETMIRROR_MOBILE_UA,
+                    "Referer" to "$mainUrl/mobile/home?app=1"
+                ),
+                timeout = 60
+            )
+        } catch (_: Exception) { }
+
+        // 3. Poll verify2.php until "All Done" (~30-45s in practice, cap ~80s)
+        repeat(20) {
+            delay(4000L)
+            try {
+                val res = app.post(
+                    "$mainUrl/mobile/verify2.php",
+                    headers = mapOf(
+                        "User-Agent" to NETMIRROR_MOBILE_UA,
+                        "X-Requested-With" to "XMLHttpRequest",
+                        "Content-Type" to "application/x-www-form-urlencoded"
+                    ),
+                    data = mapOf("verify" to addhash),
+                    timeout = 30
+                )
+                val setCookies = res.headers.values("Set-Cookie")
+                val cookie = setCookies.firstOrNull { it.startsWith("t_hash_t=") }
+                    ?.substringAfter("t_hash_t=")
+                    ?.substringBefore(";")
+                if (res.text.contains("\"statusup\":\"All Done\"") && !cookie.isNullOrEmpty()) {
+                    return cookie
+                }
+            } catch (_: Exception) { }
+        }
+        ""
+    } catch (_: Exception) {
+        ""
+    }
 }
 
 val newTvBaseHeaders = mapOf(
@@ -354,6 +489,191 @@ suspend fun getNewTvUserToken(apiBase: String, ott: String, forceRefresh: Boolea
         NetflixMirrorStorage.saveUserToken(ott, newToken)
     }
     return newToken
+}
+
+suspend fun solveBypassInWebView(): String {
+    val ctx = NetflixMirrorProvider.context ?: return ""
+    val verifyUrl = "https://net77.cc/verify2"
+    return withContext(Dispatchers.Main) {
+        suspendCancellableCoroutine { cont ->
+            try {
+                val cookieManager = CookieManager.getInstance()
+                cookieManager.setAcceptCookie(true)
+                val wv = WebView(ctx)
+                try { cookieManager.setAcceptThirdPartyCookies(wv, true) } catch (_: NoSuchMethodError) {} catch (_: Exception) {}
+                val ws = wv.settings
+                ws.javaScriptEnabled = true
+                ws.domStorageEnabled = true
+                ws.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                ws.userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
+                ws.mediaPlaybackRequiresUserGesture = false
+                wv.webChromeClient = WebChromeClient()
+
+                var resolved = false
+                fun extractAndFinish() {
+                    if (resolved) return
+                    // Check all cookies for t_hash_t from net77.cc domain
+                    val cookies = cookieManager.getCookie(verifyUrl)
+                        ?: cookieManager.getCookie("https://net77.cc")
+                        ?: ""
+                    val match = Regex("""t_hash_t=([^;]+)""").find(cookies)
+                    val tHash = match?.groupValues?.get(1)
+                    if (!tHash.isNullOrEmpty()) {
+                        resolved = true
+                        try { wv.destroy() } catch (_: Exception) {}
+                        try {
+                            val tag = wv.tag
+                            if (tag is android.app.Dialog) tag.dismiss()
+                        } catch (_: Exception) {}
+                        cont.resume(tHash)
+                    }
+                }
+
+                wv.webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(view: WebView?, url: String?) {
+                        super.onPageFinished(view, url)
+                        extractAndFinish()
+                        if (!resolved) {
+                            val handler = Handler(Looper.getMainLooper())
+                            handler.postDelayed(object : Runnable {
+                                override fun run() {
+                                    if (!resolved) {
+                                        extractAndFinish()
+                                        if (!resolved) {
+                                            handler.postDelayed(this, 1000L)
+                                        }
+                                    }
+                                }
+                            }, 1000L)
+                        }
+                    }
+                }
+
+                val dp = ctx.resources.displayMetrics.density
+                val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                val metrics = Point()
+                wm.defaultDisplay.getSize(metrics)
+                val params = WindowManager.LayoutParams(
+                    (metrics.x * 0.95f).toInt(),
+                    (metrics.y * 0.9f).toInt()
+                )
+                val wrapper = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+                val infoBar = TextView(ctx).apply {
+                    text = "Solve the Cloudflare captcha"
+                    setTextColor(Color.WHITE)
+                    setBackgroundColor(Color.parseColor("#1A1A2E"))
+                    textSize = 13f
+                    val p = (10 * dp).toInt()
+                    setPadding(p, p, p, p)
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    )
+                }
+                val container = FrameLayout(ctx).apply {
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        0,
+                        1f
+                    )
+                    isFocusable = true
+                    isFocusableInTouchMode = true
+                }
+                wv.layoutParams = FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT
+                )
+                container.addView(wv)
+
+                val isTv = Globals.isLayout(2)
+                val cursorSize = (22 * dp).toInt()
+                if (isTv) {
+                    val cursorView = View(ctx).apply {
+                        layoutParams = FrameLayout.LayoutParams(cursorSize, cursorSize)
+                        val bg = GradientDrawable().apply {
+                            shape = GradientDrawable.OVAL
+                            setColor(Color.argb(160, 255, 50, 50))
+                            setStroke((2 * dp).toInt(), Color.WHITE)
+                        }
+                        setBackgroundDrawable(bg)
+                        elevation = 999f
+                        isFocusable = false
+                    }
+                    container.addView(cursorView)
+
+                    val cursorX = (metrics.x * 0.95f) / 2f
+                    val cursorY = (metrics.y * 0.9f) / 2f
+
+                    container.viewTreeObserver.addOnGlobalLayoutListener(object : ViewTreeObserver.OnGlobalLayoutListener {
+                        override fun onGlobalLayout() {
+                            container.viewTreeObserver.removeOnGlobalLayoutListener(this)
+                            cursorView.translationX = container.width / 2f - cursorSize / 2f
+                            cursorView.translationY = container.height / 2f - cursorSize / 2f
+                        }
+                    })
+
+                    var cx = cursorX
+                    var cy = cursorY
+                    container.setOnKeyListener { _, keyCode, event ->
+                        if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+                        val step = dp * 10f
+                        when (keyCode) {
+                            KeyEvent.KEYCODE_DPAD_UP -> cy = (cy - step).coerceIn(0f, container.height.toFloat())
+                            KeyEvent.KEYCODE_DPAD_DOWN -> cy = (cy + step).coerceIn(0f, container.height.toFloat())
+                            KeyEvent.KEYCODE_DPAD_LEFT -> cx = (cx - step).coerceIn(0f, container.width.toFloat())
+                            KeyEvent.KEYCODE_DPAD_RIGHT -> cx = (cx + step).coerceIn(0f, container.width.toFloat())
+                            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
+                                val t = SystemClock.uptimeMillis()
+                                val down = MotionEvent.obtain(t, t, MotionEvent.ACTION_DOWN, cx, cy, 0)
+                                val up = MotionEvent.obtain(t, t + 120, MotionEvent.ACTION_UP, cx, cy, 0)
+                                wv.dispatchTouchEvent(down)
+                                wv.dispatchTouchEvent(up)
+                                down.recycle()
+                                up.recycle()
+                                return@setOnKeyListener true
+                            }
+                            else -> return@setOnKeyListener false
+                        }
+                        cursorView.translationX = cx - cursorSize / 2f
+                        cursorView.translationY = cy - cursorSize / 2f
+                        true
+                    }
+                }
+
+                val dialog = AlertDialog.Builder(ctx)
+                    .setView(wrapper)
+                    .setCancelable(false)
+                    .create()
+                dialog.window?.let { win ->
+                    win.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+                    win.setLayout(params.width, params.height)
+                }
+                wv.tag = dialog
+                dialog.setOnDismissListener {
+                    if (!resolved) {
+                        resolved = true
+                        try { wv.destroy() } catch (_: Exception) {}
+                        cont.resume("")
+                    }
+                }
+                Handler(Looper.getMainLooper()).postDelayed({
+                    if (!resolved) {
+                        resolved = true
+                        try { wv.destroy() } catch (_: Exception) {}
+                        try { dialog.dismiss() } catch (_: Exception) {}
+                        try { cont.resume("") } catch (_: Exception) {}
+                    }
+                }, 120000L)
+
+                wrapper.addView(infoBar)
+                wrapper.addView(container)
+                dialog.show()
+                wv.loadUrl(verifyUrl)
+            } catch (e: Exception) {
+                cont.resume("")
+            }
+        }
+    }
 }
 
 suspend fun solveCloudflareInWebView(url: String): String? {

@@ -390,7 +390,7 @@
             "Movie",
             "TvSeries"
         ],
-        "version": 45,
+        "version": 46,
         "internalName": "MovieBoxProvider",
         "description": "Multi Language Movies and Series Provider",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/MovieBoxProvider.cs3",
@@ -411,7 +411,7 @@
             "Movie",
             "TvSeries"
         ],
-        "version": 47,
+        "version": 48,
         "internalName": "MovieBoxProviderIN",
         "description": "Multi Language Movies and Series Provider (Local homepage based on region)",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/MovieBoxProviderIN.cs3",
@@ -434,7 +434,7 @@
             "AnimeMovie",
             "AsianDrama"
         ],
-        "version": 16,
+        "version": 17,
         "internalName": "MovieLinkBDProvider",
         "description": "MovieLinkBD - Largest Movie Download Site in Bangladesh",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/MovieLinkBDProvider.cs3",
@@ -515,7 +515,7 @@
         "tvTypes": [
             "Live"
         ],
-        "version": 33,
+        "version": 34,
         "internalName": "PlayZTVProvider",
         "description": "Watch Live TV channels & sports via PlayZTV",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/PlayZTVProvider.cs3",
@@ -599,7 +599,7 @@
         "tvTypes": [
             "Live"
         ],
-        "version": 17,
+        "version": 19,
         "internalName": "SportzxProvider",
         "description": "Watch Live Sports Events via SportzX",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/SportzxProvider.cs3",
@@ -661,7 +661,7 @@
         "tvTypes": [
             "TvSeries"
         ],
-        "version": 35,
+        "version": 36,
         "internalName": "TamilDhoolProvider",
         "description": "Tamil Tv Serial/Shows Provider",
         "url": "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/TamilDhoolProvider.cs3",

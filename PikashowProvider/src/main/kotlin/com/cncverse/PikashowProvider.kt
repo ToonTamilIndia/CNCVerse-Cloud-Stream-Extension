@@ -7,7 +7,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import org.json.JSONArray
-import org.jsoup.Jsoup
+import org.json.JSONObject
 import java.util.UUID
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
@@ -21,6 +21,7 @@ class PikashowProvider : MainAPI() {
 
     companion object {
         var context: android.content.Context? = null
+        private const val HDBV_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36"
     }
 
     private val apiKey = "picashow-api-secret-key"
@@ -133,25 +134,6 @@ class PikashowProvider : MainAPI() {
         @JsonProperty("language") val language: String? = null,
         @JsonProperty("playUrl") val playUrl: String? = null,
         @JsonProperty("resolutions") val resolutions: List<Resolution>? = null
-    )
-
-    data class Keys(
-        @JsonProperty("file") val file: String,
-        @JsonProperty("key") val key: String
-    )
-
-    data class Season(
-        @JsonProperty("id") val id: String,
-        @JsonProperty("folder") val folder: List<HDBVEpisode>
-    )
-
-    data class HDBVEpisode(
-        @JsonProperty("episode") val episode: String,
-        @JsonProperty("folder") val folder: List<FileData>
-    )
-
-    data class FileData(
-        @JsonProperty("file") val file: String
     )
 
     // ── Signature & headers ─────────────────────────────────────────────────
@@ -441,7 +423,7 @@ class PikashowProvider : MainAPI() {
                     if (response.code == 200) {
                         val videoData = mapper.readValue<VideoApiResponse>(response.text).data
                         if (videoData != null) {
-                            addVideoLinksToCallback(videoData, callback, "Episode $episode")
+                            addVideoLinksToCallback(videoData, callback, "Episode $episode", episode.toIntOrNull())
                             return true
                         }
                     }
@@ -508,15 +490,22 @@ class PikashowProvider : MainAPI() {
 
     // ── addVideoLinksToCallback ─────────────────────────────────────────────
 
+    private fun originOf(url: String): String {
+        return try {
+            val uri = java.net.URI(url)
+            "${uri.scheme ?: "https"}://${uri.host}"
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
     private suspend fun addVideoLinksToCallback(
         videoData: VideoData,
         callback: (ExtractorLink) -> Unit,
-        contentName: String
+        contentName: String,
+        episodeNumber: Int? = null
     ) {
-        val baseHeaders = mutableMapOf(
-            "Referer" to "https://samui390dod.com/",
-            "Origin" to "https://samui390dod.com"
-        )
+        val baseHeaders = mutableMapOf<String, String>()
         videoData.heastr?.let { baseHeaders["heastr"] = it }
         videoData.uastr?.let { baseHeaders["user-agent"] = it }
         videoData.uaStr?.let { baseHeaders["user-agent"] = it }
@@ -538,6 +527,15 @@ class PikashowProvider : MainAPI() {
             baseHeaders
         }
 
+        // Collect candidate player/embed URLs (main + extra servers)
+        val candidates = mutableListOf<Pair<String?, String>>() // label to url
+        videoData.url?.let { candidates.add(null to it) }
+        videoData.clientUrls?.forEach { client ->
+            client.url?.let { u -> candidates.add(client.label to u) }
+        }
+
+        var emitted = 0
+
         val hasResolutions = !videoData.resolutions.isNullOrEmpty()
         val hasLanguageResolutions =
             videoData.languageOptions?.any { !it.resolutions.isNullOrEmpty() } == true ||
@@ -546,63 +544,89 @@ class PikashowProvider : MainAPI() {
         if (hasResolutions || hasLanguageResolutions) {
             videoData.resolutions?.forEach { resolution ->
                 resolution.url?.let { url ->
-                    val linkType = when {
-                        url.contains("m3u8") || videoData.sourceType == "hls" -> ExtractorLinkType.M3U8
-                        videoData.sourceType == "direct" -> ExtractorLinkType.VIDEO
-                        else -> ExtractorLinkType.VIDEO
+                    val linkType = if (url.contains("m3u8") || videoData.sourceType == "hls") {
+                        ExtractorLinkType.M3U8
+                    } else {
+                        ExtractorLinkType.VIDEO
                     }
                     callback(
                         newExtractorLink(name, "${resolution.label ?: "Unknown"} - $contentName", url, linkType) {
-                            referer = "https://samui390dod.com/"
+                            referer = originOf(url).ifEmpty { "$name" }
                             quality = getQualityValueFromLabel(resolution.label)
                             headers = finalHeaders
                         }
                     )
+                    emitted++
                 }
             }
 
             (videoData.languageOptions ?: videoData.languages)?.forEach { lang ->
                 lang.resolutions?.forEach { resolution ->
                     resolution.url?.let { url ->
-                        val linkType = when {
-                            url.contains("m3u8") || videoData.sourceType == "hls" -> ExtractorLinkType.M3U8
-                            videoData.sourceType == "direct" -> ExtractorLinkType.VIDEO
-                            else -> ExtractorLinkType.VIDEO
+                        val linkType = if (url.contains("m3u8") || videoData.sourceType == "hls") {
+                            ExtractorLinkType.M3U8
+                        } else {
+                            ExtractorLinkType.VIDEO
                         }
                         val langName = lang.language.takeIf { !it.isNullOrBlank() } ?: "Default"
                         callback(
                             newExtractorLink(name, "${resolution.label ?: "Unknown"} ($langName) - $contentName", url, linkType) {
-                                referer = "https://samui390dod.com/"
+                                referer = originOf(url).ifEmpty { "$name" }
                                 quality = getQualityValueFromLabel(resolution.label)
                                 headers = finalHeaders
                             }
                         )
+                        emitted++
                     }
                 }
             }
-        } else if (videoData.url != null) {
-            try {
-                val streamingUrl = parseHDBVPlayerUrl(videoData.url)
-                if (streamingUrl.isNotEmpty()) {
-                    val urlOrigin = videoData.url
-                        .substringBefore("/", "https://") + "://" +
-                        videoData.url.substringAfter("://").substringBefore("/") + "/"
-                    callback(
-                        newExtractorLink(name, "$contentName - HDBV", streamingUrl, ExtractorLinkType.M3U8) {
-                            referer = urlOrigin
-                            quality = Qualities.P720.value
-                            headers = finalHeaders
+        }
+
+        if (emitted == 0) {
+            for ((serverLabel, playerUrl) in candidates) {
+                val serverSuffix = serverLabel?.takeIf { it.isNotBlank() && it != "Server1" }
+                    ?.let { " [$it]" } ?: ""
+
+                // 1. HDVB player pages (/play/...) → resolve via playlist API
+                if (playerUrl.contains("/play")) {
+                    try {
+                        val links = resolveHdbvLinks(playerUrl, episodeNumber)
+                        for ((label, streamUrl) in links) {
+                            callback(
+                                newExtractorLink(name, "$contentName$serverSuffix - ${label.ifEmpty { "HDBV" }}", streamUrl, ExtractorLinkType.M3U8) {
+                                    referer = originOf(playerUrl)
+                                    quality = Qualities.P720.value
+                                    headers = finalHeaders
+                                }
+                            )
+                            emitted++
                         }
-                    )
-                } else {
-                    fallbackToDirectUrls(videoData, callback, contentName, finalHeaders)
+                    } catch (_: Exception) { }
                 }
-            } catch (_: Exception) {
-                fallbackToDirectUrls(videoData, callback, contentName, finalHeaders)
+
+                // 2. Embed pages (streamtape /e/, dood, etc.) → route through extractors
+                if (isEmbedUrl(playerUrl)) {
+                    val resolved = try {
+                        loadExtractor(playerUrl, originOf(playerUrl).ifEmpty { playerUrl }, { }, callback)
+                    } catch (_: Exception) {
+                        false
+                    }
+                    if (resolved) emitted++
+                }
+
+                // If this server produced anything, don't fall through to next server blindly
+                if (emitted > 0) break
             }
-        } else {
+        }
+
+        if (emitted == 0) {
             fallbackToDirectUrls(videoData, callback, contentName, finalHeaders)
         }
+    }
+
+    private fun isEmbedUrl(url: String): Boolean {
+        val embedMarkers = listOf("/e/", "/embed-", "/embed/", "streamtape", "dood", "dsvplay", "mp4upload", "vidmoly", "ok.ru", "sibnet")
+        return embedMarkers.any { url.contains(it, ignoreCase = true) }
     }
 
     // ── fallbackToDirectUrls ────────────────────────────────────────────────
@@ -629,7 +653,7 @@ class PikashowProvider : MainAPI() {
             }
             callback(
                 newExtractorLink(name, "$contentName - ${videoData.host ?: "Direct"}", url, linkType) {
-                    referer = "https://samui390dod.com/"
+                    referer = originOf(url).ifEmpty { "$name" }
                     this.quality = quality
                     headers = finalHeaders
                 }
@@ -637,78 +661,167 @@ class PikashowProvider : MainAPI() {
         }
     }
 
-    // ── parseHDBVPlayerUrl ──────────────────────────────────────────────────
+    // ── HDVB player resolution ──────────────────────────────────────────────
 
-    private suspend fun parseHDBVPlayerUrl(playerUrl: String): String {
-        try {
-            val response = app.get(
-                url = playerUrl,
-                headers = mapOf(
-                    "Accept" to "*/*",
-                    "Accept-Encoding" to "gzip, deflate, br",
-                    "Accept-Language" to "en-CA,en;q=0.9;q=0.8;q=0.7,en-US;q=0.6",
-                    "Connection" to "keep-alive",
-                    "Host" to "samui390dod.com",
-                    "Icy-MetaData" to "1",
-                    "Origin" to "https://samui390dod.com",
-                    "Referer" to "https://samui390dod.com/",
-                    "sec-ch-ua" to "\"Chromium\";v=\"136\", \"Android WebView\";v=\"136\", \"Not.A/Brand\";v=\"99\"",
-                    "sec-ch-ua-mobile" to "?1",
-                    "sec-ch-ua-platform" to "\"Android\"",
-                    "Sec-Fetch-Dest" to "video",
-                    "sec-fetch-mode" to "cors",
-                    "Sec-Fetch-Site" to "cross-site",
-                    "sec-fetch-user" to "?1",
-                    "User-Agent" to "Mozilla/5.0 (iPhone; CPU iPhone OS 13_5_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.1.1 Mobile/15E148 Safari/604.1",
-                    "X-Requested-With" to "com.offshore.pikachu"
-                )
+    /**
+     * Fetches an HDVB player page (/play/...) and resolves every stream it exposes.
+     * Handles both inline configs (`new HDVBPlayer({...})`) and variable configs
+     * (`var p = {...}; new HDVBPlayer(p)`), scanning every script tag.
+     * Player responses nest either as season→episode→audiotrack or flat audiotracks.
+     */
+    private suspend fun resolveHdbvLinks(playerUrl: String, episodeNumber: Int? = null): List<Pair<String, String>> {
+        val origin = originOf(playerUrl)
+        if (origin.isEmpty()) return emptyList()
+
+        val pageHeaders = mapOf(
+            "Accept" to "*/*",
+            "Accept-Language" to "en-US,en;q=0.9",
+            "Origin" to origin,
+            "Referer" to "$origin/",
+            "User-Agent" to HDBV_UA,
+            "X-Requested-With" to "com.offshore.pikachu"
+        )
+
+        // Some player URLs 404 with their query suffix; retry without it.
+        var pageResponse = app.get(url = playerUrl, headers = pageHeaders, timeout = 30)
+        if (pageResponse.code != 200 && playerUrl.contains("?")) {
+            pageResponse = app.get(
+                url = playerUrl.substringBefore("?"),
+                headers = pageHeaders,
+                timeout = 30
             )
-            if (response.code != 200) return ""
+        }
+        if (pageResponse.code != 200) return emptyList()
+        val pageHtml = pageResponse.text
 
-            val doc = Jsoup.parse(response.text)
-            val scripts = doc.getElementsByTag("script")
-            if (scripts.size < 8) return ""
+        // 1. Inline style: HDVBPlayer({...});
+        val configs = mutableListOf<String>()
+        Regex("""HDVBPlayer\s*\(\s*(\{.*?\})\s*\)\s*;""", RegexOption.DOT_MATCHES_ALL)
+            .findAll(pageHtml).forEach { configs.add(it.groupValues[1]) }
 
-            val matchResult = Regex("""HDVBPlayer\((.*?)\);""").find(scripts[7].toString())
-            if (matchResult != null) {
-                val fileKeys = mapper.readValue<Keys>(matchResult.groupValues[1])
-                val origin = playerUrl.substringBefore("/", "https://") + "://" +
-                    playerUrl.substringAfter("://").substringBefore("/") + "/"
-                val absoluteUrl = origin + fileKeys.file
-                val postHeaders = mapOf(
-                    "Accept" to "*/*",
-                    "Accept-Encoding" to "gzip, deflate, br",
-                    "Accept-Language" to "en-US,en;q=0.9",
-                    "Content-Length" to "0",
-                    "Content-Type" to "application/x-www-form-urlencoded",
-                    "Origin" to origin,
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36",
-                    "X-Csrf-Token" to fileKeys.key
-                )
-                val postResponse = app.post(url = absoluteUrl, headers = postHeaders, referer = playerUrl)
-                if (postResponse.code == 200) {
-                    val jsonArray = JSONArray(postResponse.text)
-                    val seasons = mutableListOf<Season>()
-                    for (i in 0 until jsonArray.length()) {
-                        val jsonObject = jsonArray.getJSONObject(i).toString()
-                        seasons.add(mapper.readValue(jsonObject.replace("[]", "")))
-                    }
-                    val episodeDetails = seasons.firstOrNull() ?: return ""
-                    val episode = episodeDetails.folder.firstOrNull()
-                        ?.folder?.firstOrNull()
-                        ?.file?.replace("~", "") ?: return ""
+        // 2. Variable style: var|let|const NAME = {...}; ... HDVBPlayer(NAME);
+        val declaredVars = mutableMapOf<String, String>()
+        Regex("""(?:var|let|const)\s+(\w+)\s*=\s*(\{.*?\})\s*;""", RegexOption.DOT_MATCHES_ALL)
+            .findAll(pageHtml).forEach { declaredVars[it.groupValues[1]] = it.groupValues[2] }
+        Regex("""HDVBPlayer\s*\(\s*(\w+)\s*\)""").findAll(pageHtml).forEach { m ->
+            declaredVars[m.groupValues[1]]?.let { configs.add(it) }
+        }
 
-                    val playlistResponse = app.post(
-                        url = "${origin}playlist/$episode.txt",
-                        headers = postHeaders,
-                        referer = playerUrl
-                    )
-                    return if (playlistResponse.code == 200) {
-                        playlistResponse.text.trim()
-                    } else ""
+        val links = mutableListOf<Pair<String, String>>()
+        val seenUrls = mutableSetOf<String>()
+
+        for (configJson in configs) {
+            val config = try {
+                JSONObject(configJson)
+            } catch (_: Exception) {
+                continue
+            }
+            val playlistPath = config.optString("file", "")
+            if (playlistPath.isEmpty()) continue
+            val csrfKey = config.optString("key", "")
+
+            for ((label, streamUrl) in resolveHdbvPlaylist(origin, playlistPath, csrfKey, playerUrl, episodeNumber)) {
+                if (seenUrls.add(streamUrl)) links.add(label to streamUrl)
+            }
+            if (links.isNotEmpty()) break
+        }
+        return links
+    }
+
+    private suspend fun hdbvPost(url: String, referer: String, csrfKey: String): String? {
+        val postHeaders = mutableMapOf(
+            "Accept" to "*/*",
+            "Accept-Language" to "en-US,en;q=0.9",
+            "Content-Type" to "application/x-www-form-urlencoded",
+            "Origin" to originOf(url),
+            "User-Agent" to HDBV_UA
+        )
+        if (csrfKey.isNotEmpty()) postHeaders["X-Csrf-Token"] = csrfKey
+        return try {
+            val response = app.post(url = url, headers = postHeaders, referer = referer)
+            if (response.code == 200) response.text else null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** Resolves one level: playlist endpoint → entries, then each entry token → final stream URL. */
+    private suspend fun resolveHdbvPlaylist(
+        origin: String,
+        playlistPath: String,
+        csrfKey: String,
+        referer: String,
+        episodeNumber: Int? = null
+    ): List<Pair<String, String>> {
+        val playlistUrl = if (playlistPath.startsWith("http")) {
+            playlistPath
+        } else {
+            "$origin/${playlistPath.trimStart('/')}"
+        }
+        val body = hdbvPost(playlistUrl, referer, csrfKey) ?: return emptyList()
+
+        val root = try {
+            JSONArray(body)
+        } catch (_: Exception) {
+            return emptyList()
+        }
+
+        val results = mutableListOf<Pair<String, String>>()
+        val seenTokens = mutableSetOf<String>()
+        walkHdbvEntries(root, "", csrfKey, referer, origin, results, seenTokens, episodeNumber)
+        return results
+    }
+
+    private suspend fun walkHdbvEntries(
+        node: Any?,
+        prefix: String,
+        csrfKey: String,
+        referer: String,
+        origin: String,
+        out: MutableList<Pair<String, String>>,
+        seenTokens: MutableSet<String>,
+        episodeNumber: Int? = null
+    ) {
+        when (node) {
+            is JSONArray -> {
+                for (i in 0 until node.length()) {
+                    walkHdbvEntries(node.opt(i), prefix, csrfKey, referer, origin, out, seenTokens, episodeNumber)
                 }
             }
-        } catch (_: Exception) { }
-        return ""
+            is JSONObject -> {
+                val rawFile = node.optString("file", "")
+                if (rawFile.isNotEmpty()) {
+                    val labelParts = mutableListOf<String>()
+                    if (prefix.isNotEmpty()) labelParts.add(prefix.trim())
+                    node.optString("title", "").takeIf { it.isNotEmpty() }?.let { labelParts.add(it) }
+                    val label = labelParts.joinToString(" ")
+
+                    // Skip non-matching episodes before making the resolution POST
+                    val matchesEpisode = episodeNumber == null ||
+                        Regex("""(?:^|\s)E0*${episodeNumber}(?:\s|$)""").containsMatchIn(label)
+
+                    if (matchesEpisode) {
+                        val token = rawFile.replace("~", "").trimStart('/')
+                        if (token.isNotEmpty() && seenTokens.add(token)) {
+                            val finalUrl = hdbvPost("$origin/playlist/$token.txt", referer, csrfKey)?.trim()?.removeSurrounding("\"")
+                            if (!finalUrl.isNullOrEmpty() && finalUrl.startsWith("http")) {
+                                out.add(label to finalUrl)
+                            }
+                        }
+                    }
+                }
+
+                node.optJSONArray("folder")?.let { folder ->
+                    val childPrefix = when {
+                        node.optString("episode", "").isNotEmpty() ->
+                            "$prefix E${node.optString("episode")}".trim()
+                        node.optString("title", "").startsWith("Season", true) ->
+                            "$prefix ${node.optString("title").replace("Season", "S", true)}".trim()
+                        else -> prefix
+                    }
+                    walkHdbvEntries(folder, childPrefix, csrfKey, referer, origin, out, seenTokens, episodeNumber)
+                }
+            }
+        }
     }
 }

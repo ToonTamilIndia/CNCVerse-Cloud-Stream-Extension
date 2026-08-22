@@ -85,12 +85,19 @@ class MovieLinkBDProvider : MainAPI() {
 
     @Volatile private var resolvedBase: String? = null
 
-    // ── Custom OkHttp client with Cloudflare bypass ──────────────────────────
+    // ── Custom OkHttp clients with Cloudflare bypass ─────────────────────────
     private val cfClient by lazy {
         OkHttpClient.Builder()
             .addInterceptor(CloudflareKiller())
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
+            .build()
+    }
+
+    private val noRedirectClient by lazy {
+        cfClient.newBuilder()
+            .followRedirects(false)
+            .followSslRedirects(false)
             .build()
     }
 
@@ -110,6 +117,33 @@ class MovieLinkBDProvider : MainAPI() {
         return Jsoup.parse(html, url)
     }
 
+    /** HEAD probe to detect direct media responses (extension-less CDN URLs). */
+    private suspend fun probeContentType(url: String, refererUrl: String): String? {
+        return withContext(Dispatchers.IO) {
+            try {
+                val probeHeaders = headers + mapOf("Referer" to refererUrl)
+                val headRequest = Request.Builder().url(url).headers(buildHeaders(probeHeaders)).head().build()
+                cfClient.newCall(headRequest).execute().use { response ->
+                    if (response.isSuccessful) return@withContext(response.header("Content-Type"))
+                }
+                // Fallback: ranged GET (some servers reject HEAD)
+                val getRequest = Request.Builder().url(url).headers(buildHeaders(probeHeaders))
+                    .header("Range", "bytes=0-0").build()
+                cfClient.newCall(getRequest).execute().use { response ->
+                    if (response.isSuccessful) response.header("Content-Type") else null
+                }
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
+
+    private fun buildHeaders(headerMap: Map<String, String>): Headers {
+        val builder = Headers.Builder()
+        for ((k, v) in headerMap) builder.add(k, v)
+        return builder.build()
+    }
+
     // ── Fix URL domain for movielinkbd links ─────────────────────────────────
     private fun fixUrlDomain(url: String, base: String): String {
         if (url.isEmpty()) return url
@@ -127,31 +161,77 @@ class MovieLinkBDProvider : MainAPI() {
     }
 
     // ── Resolve the live mirror URL ─────────────────────────────────────────
+    private val baseCandidates = listOf(
+        FALLBACK_URL,
+        "https://www.movielinkbd.one",
+        "https://movielinkbd.li",
+        "https://open.movielinkbd.li"
+    )
+
+    private fun isValidMlbdHome(html: String): Boolean {
+        if (html.length < 500) return false
+        val lower = html.lowercase()
+        return lower.contains("movie-card") || lower.contains("mlbd-img") ||
+            lower.contains("movielinkbd") && lower.contains("<!doctype")
+    }
+
+    /** Follows the redirect chain manually so the final (rotating) host is known. */
+    private suspend fun followRedirects(url: String, maxHops: Int = 6): String? {
+        return withContext(Dispatchers.IO) {
+            var current = url
+            var hops = 0
+            while (hops < maxHops) {
+                hops++
+                try {
+                    val request = Request.Builder().url(current)
+                        .header("User-Agent", headers["User-Agent"] ?: "Mozilla/5.0")
+                        .header("Accept-Language", "en-US,en;q=0.9")
+                        .get().build()
+                    noRedirectClient.newCall(request).execute().use { response ->
+                        val location = response.header("Location")
+                        if (response.isRedirect && !location.isNullOrEmpty()) {
+                            current = URI(current).resolve(location).toString()
+                            null
+                        } else {
+                            current
+                        }
+                    }?.let { return@withContext(it) }
+                } catch (_: Exception) {
+                    return@withContext(null)
+                }
+            }
+            current
+        }
+    }
+
     private suspend fun getBase(): String {
         resolvedBase?.let { return it }
-        return try {
-            val html = httpGetText(mainUrl, headers)
-            val doc = Jsoup.parse(html, mainUrl)
-            val newSiteLink = doc.select("a").firstOrNull { a ->
-                val t = a.text().lowercase()
-                t.contains("new site") || t.contains("visit movielinkbd new site")
+        for (candidate in baseCandidates) {
+            val finalUrl = try {
+                followRedirects(candidate)
+            } catch (_: Exception) {
+                null
+            } ?: continue
+            val uri = try {
+                URI(finalUrl)
+            } catch (_: Exception) {
+                continue
             }
-            val newUrl = if (newSiteLink != null) {
-                newSiteLink.attr("abs:href")
-            } else {
-                doc.selectFirst("a[href*='movielinkbd']:not([href*='movielinkbd.one'])")?.attr("abs:href")
-                    ?: mainUrl
+            val host = uri.host?.lowercase() ?: continue
+            if (!host.contains("movielinkbd")) continue
+            val base = "${uri.scheme}://$host"
+            val html = try {
+                httpGetText("$base/", headers)
+            } catch (_: Exception) {
+                ""
             }
-            val uri = URI(newUrl.trimEnd('/'))
-            val base = "${uri.scheme}://${uri.host}"
+            if (!isValidMlbdHome(html)) continue
+
             resolvedBase = base
-            if (base != mainUrl) {
-                mainUrl = base
-            }
-            base
-        } catch (_: Exception) {
-            FALLBACK_URL
+            if (base != mainUrl) mainUrl = base
+            return base
         }
+        return FALLBACK_URL
     }
 
     // ── Homepage / category pages ───────────────────────────────────────────
@@ -287,6 +367,7 @@ class MovieLinkBDProvider : MainAPI() {
                                             src.optInt("quality", 0),
                                             watchUrl,
                                             src.optString("name", ""),
+                                            src.optString("audio", ""),
                                             epKey,
                                             epLabel
                                         )
@@ -325,7 +406,7 @@ class MovieLinkBDProvider : MainAPI() {
         if (!isSeries) {
             val items = mutableListOf<String>()
             for (src in jsonSources) {
-                items.add("${qualityFromInt(src.quality)}|watch:${src.url}|$url")
+                items.add("${sourceLabel(src)}|watch:${src.url}|$url")
             }
             for (a in fileAnchors) items.add(anchorLink(a))
             for (a in linkAnchors + watchAnchors) items.add(anchorLink(a))
@@ -348,7 +429,7 @@ class MovieLinkBDProvider : MainAPI() {
                 val epNum = Regex("\\d+").find(epKey)?.value?.toIntOrNull() ?: 1
                 val epLabel = srcs.firstOrNull()?.episodeLabel?.takeIf { it.isNotBlank() }
                     ?: "Episode $epNum"
-                val epData = srcs.map { "${qualityFromInt(it.quality)}|watch:${it.url}|$url" }
+                val epData = srcs.map { "${sourceLabel(it)}|watch:${it.url}|$url" }
                     .joinToString(" ; ")
                 episodesData.add(newEpisode(epData) {
                     this.name = epLabel
@@ -653,7 +734,34 @@ class MovieLinkBDProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ) {
         try {
-            if (watchUrl.contains(".m3u8") || watchUrl.contains(".mp4") || watchUrl.contains(".mkv")) {
+            val isKnownMediaExt = watchUrl.contains(".m3u8") ||
+                watchUrl.contains(".mp4") || watchUrl.contains(".mkv")
+
+            // Inline player data provides direct CDN URLs without file
+            // extensions (e.g. cdn.dramalinkbd.tv/p/HASH). Probe content type
+            // and emit them as direct streams instead of parsing as HTML.
+            if (!isKnownMediaExt) {
+                val contentType = probeContentType(watchUrl, refererUrl)
+                val lower = contentType?.lowercase()
+                if (lower != null && (
+                    lower.startsWith("video/") || lower.startsWith("audio/") ||
+                        lower.contains("mpegurl") || lower.contains("octet-stream")
+                    )
+                ) {
+                    val type = if (lower.contains("mpegurl")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                    val quality = labelToQuality(qualityLabel)
+                    callback(ExtractorLink(
+                        source = name,
+                        name = "$name [$qualityLabel]",
+                        url = watchUrl,
+                        referer = refererUrl,
+                        quality = quality,
+                        type = type,
+                        headers = headers + mapOf("Referer" to refererUrl)
+                    ))
+                    return
+                }
+            } else {
                 val type = if (watchUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                 val quality = labelToQuality(qualityLabel)
                 callback(ExtractorLink(
@@ -853,9 +961,15 @@ class MovieLinkBDProvider : MainAPI() {
         val quality: Int,
         val url: String,
         val name: String,
+        val audio: String,
         val episodeKey: String,
         val episodeLabel: String
     )
+
+    private fun sourceLabel(src: StreamSource): String {
+        val audio = src.audio.trim().takeIf { it.isNotBlank() }?.let { " $it" } ?: ""
+        return "${qualityFromInt(src.quality)}$audio"
+    }
 
     private fun isComingSoon(a: Element): Boolean {
         val t = a.text().trim().lowercase()

@@ -9,5 +9,6 @@ class PikashowPlugin : Plugin() {
     override fun load(context: Context) {
         PikashowProvider.context = context
         registerMainAPI(PikashowProvider())
+        registerExtractorAPI(StreamTapeSite())
     }
 }

@@ -10,7 +10,7 @@ import com.lagradost.nicehttp.Requests
 import com.lagradost.nicehttp.ResponseParser
 import kotlin.reflect.KClass
 import okhttp3.FormBody
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.*
 import android.content.Context
 import com.lagradost.api.Log
 import org.json.JSONObject
@@ -220,28 +220,70 @@ suspend fun netMirrorMobileLoadLinks(
     return emitted
 }
 
-suspend fun bypass(mainUrl: String): String {
-    // Check persistent storage first
-    val (savedCookie, savedTimestamp) = NetflixMirrorStorage.getCookie()
+private val bypassScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+private val inflightLock = Any()
+@Volatile private var inflightBypass: Deferred<String>? = null
 
-    // Cookie Max-Age is 12h server-side
-    if (!savedCookie.isNullOrEmpty() && System.currentTimeMillis() - savedTimestamp < 43_200_000) {
-        return savedCookie
+private fun isCookieValid(): Boolean {
+    val (savedCookie, savedTimestamp) = NetflixMirrorStorage.getCookie()
+    return !savedCookie.isNullOrEmpty() && (System.currentTimeMillis() - savedTimestamp < 43_200_000)
+}
+
+fun primeBypass(mainUrl: String) {
+    if (isCookieValid()) return
+    synchronized(inflightLock) {
+        if (isCookieValid()) return
+        if (inflightBypass?.isActive == true) return
+        inflightBypass = bypassScope.async {
+            doBypass(mainUrl, allowWebView = false)
+        }
+    }
+}
+
+suspend fun ensureBypass(mainUrl: String): String {
+    if (isCookieValid()) {
+        return NetflixMirrorStorage.getCookie().first ?: ""
     }
 
-    // WITHOUT CF first: mobile-API verification flow (no captcha needed).
-    // 1. /mobile/home?app=1 -> data-addhash attribute
-    // 2. userver.<host>/?hee5=<addhash>&a=y&t=<rand> (registers the ad click)
-    // 3. poll POST /mobile/verify2.php (verify=<addhash>) until "All Done";
-    //    the successful response sets t_hash_t via Set-Cookie.
-    val newCookie = netMirrorMobileBypass(mainUrl)
+    val activeJob = synchronized(inflightLock) {
+        if (isCookieValid()) {
+            return NetflixMirrorStorage.getCookie().first ?: ""
+        }
+        inflightBypass?.takeIf { it.isActive } ?: run {
+            val d = bypassScope.async {
+                doBypass(mainUrl, allowWebView = true)
+            }
+            inflightBypass = d
+            d
+        }
+    }
 
+    return try {
+        activeJob.await()
+    } catch (_: Exception) {
+        NetflixMirrorStorage.getCookie().first ?: ""
+    }
+}
+
+suspend fun bypass(mainUrl: String): String {
+    return ensureBypass(mainUrl)
+}
+
+private suspend fun doBypass(mainUrl: String, allowWebView: Boolean): String {
+    if (isCookieValid()) {
+        return NetflixMirrorStorage.getCookie().first ?: ""
+    }
+
+    val newCookie = netMirrorMobileBypass(mainUrl)
     if (newCookie.isNotEmpty()) {
         NetflixMirrorStorage.saveCookie(newCookie)
         return newCookie
     }
 
-    // WITH CF fallback: WebView captcha solve (Cloudflare challenge UI)
+    if (!allowWebView) {
+        return ""
+    }
+
     val wvCookie = solveBypassInWebView()
     if (wvCookie.isNotEmpty()) {
         NetflixMirrorStorage.saveCookie(wvCookie)

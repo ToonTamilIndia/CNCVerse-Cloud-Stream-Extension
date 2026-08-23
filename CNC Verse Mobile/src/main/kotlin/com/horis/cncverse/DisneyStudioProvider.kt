@@ -63,7 +63,8 @@ open class DisneyStudioProvider(
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        cookie_value = if (cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
+        primeBypass(mainUrl)
+        cookie_value = NetflixMirrorStorage.getCookie().first ?: ""
         val document = app.get(
             "$mainUrl/mobile/home?app=1",
             cookies = buildCookies(),
@@ -94,7 +95,7 @@ open class DisneyStudioProvider(
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        cookie_value = if (cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
+        cookie_value = ensureBypass(mainUrl)
         val id = parseJson<Id>(url).id
         val data = app.get(
             "$mainUrl/mobile/hs/post.php?id=$id&t=${APIHolder.unixTime}",

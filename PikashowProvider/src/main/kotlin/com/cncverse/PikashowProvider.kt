@@ -1,4 +1,4 @@
-﻿package com.cncverse
+package com.cncverse
 
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
@@ -471,7 +471,7 @@ class PikashowProvider : MainAPI() {
                             "noepisodes" to "0"
                         )
                         val videoResponse = app.get("$mainUrl/v1/api/video", params = videoParams, headers = headers, timeout = 30)
-                        if (videoResponse.code != 404) {
+                        if (videoResponse.code == 200) {
                             val videoApiResponse = mapper.readValue<VideoApiResponse>(videoResponse.text)
                             videoApiResponse.data?.let { videoData ->
                                 addVideoLinksToCallback(videoData, callback, safeTitle)
@@ -527,11 +527,19 @@ class PikashowProvider : MainAPI() {
             baseHeaders
         }
 
-        // Collect candidate player/embed URLs (main + extra servers)
+        // Collect candidate player/embed URLs (main + extra servers + series details)
         val candidates = mutableListOf<Pair<String?, String>>() // label to url
         videoData.url?.let { candidates.add(null to it) }
         videoData.clientUrls?.forEach { client ->
             client.url?.let { u -> candidates.add(client.label to u) }
+        }
+        videoData.details?.forEach { seasonDetail ->
+            seasonDetail.episodes?.forEach { ep ->
+                val matches = episodeNumber == null || ep.episode == episodeNumber.toString()
+                if (matches && !ep.url.isNullOrEmpty()) {
+                    candidates.add("Episode ${ep.episode ?: ""}" to ep.url)
+                }
+            }
         }
 
         var emitted = 0
@@ -639,6 +647,7 @@ class PikashowProvider : MainAPI() {
     ) {
         val directUrl = videoData.playUrl ?: videoData.videoUrl ?: videoData.url
         directUrl?.let { url ->
+            if (isEmbedUrl(url)) return
             val quality = when {
                 videoData.quality?.lowercase()?.contains("1080") == true -> Qualities.P1080.value
                 videoData.quality?.lowercase()?.contains("hd") == true -> Qualities.P720.value

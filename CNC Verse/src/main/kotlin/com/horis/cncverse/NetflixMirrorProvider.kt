@@ -56,8 +56,7 @@ class NetflixMirrorProvider : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        primeBypass(mainUrl)
-        cookie_value = NetflixMirrorStorage.getCookie().first ?: ""
+        cookie_value = ensureBypass(mainUrl)
         val cookies = mapOf(
             "t_hash_t" to cookie_value,
             "ott" to "nf",

@@ -67,8 +67,7 @@ open class DisneyStudioProvider(
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        primeBypass(mainUrl)
-        cookie_value = NetflixMirrorStorage.getCookie().first ?: ""
+        cookie_value = ensureBypass(mainUrl)
         val document = app.get(
             "$mainUrl/mobile/home?app=1",
             cookies = buildCookies(),

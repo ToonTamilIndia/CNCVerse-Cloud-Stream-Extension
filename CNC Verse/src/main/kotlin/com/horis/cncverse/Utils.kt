@@ -261,24 +261,39 @@ private suspend fun netMirrorMobileBypass(mainUrl: String): String {
             "X-Requested-With" to "app.netmirror.netmirrornew"
         )
 
-        // 1. Home page -> data-addhash
-        val homeRes = app.get("$mainUrl/mobile/home?app=1", headers = homeHeaders, timeout = 30)
-        if (homeRes.code != 200) return ""
-        val addhash = Regex("""data-addhash="([^"]+)"""").find(homeRes.text)?.groupValues?.get(1)
-            ?: return ""
+        // 1. Home page -> data-addhash. Some mirrors redirect /mobile/home to
+        // dead domains (net77 -> expired net50); net52 serves it directly.
+        var addhash = ""
+        for (homeBase in listOf(mainUrl.trimEnd('/'), "https://net52.cc")) {
+            try {
+                val homeRes = app.get("$homeBase/mobile/home?app=1", headers = homeHeaders, timeout = 30)
+                if (homeRes.code != 200) continue
+                addhash = Regex("""data-addhash="([^"]+)"""").find(homeRes.text)?.groupValues?.get(1).orEmpty()
+                if (addhash.isNotEmpty()) break
+            } catch (_: Exception) { continue }
+        }
+        if (addhash.isEmpty()) return ""
 
         // 2. Trigger verification helper; it redirects through an ad chain whose
         // completion registers the click against our addhash.
-        try {
-            app.get(
-                "https://userver.$host/?hee5=${java.net.URLEncoder.encode(addhash, "UTF-8")}&a=y&t=${System.currentTimeMillis()}",
-                headers = mapOf(
-                    "User-Agent" to NETMIRROR_MOBILE_UA,
-                    "Referer" to "$mainUrl/mobile/home?app=1"
-                ),
-                timeout = 60
-            )
-        } catch (_: Exception) { }
+        // NOTE: the userver subdomain only exists on net52 (userver.net77.cc has
+        // no DNS record); the backend session store is shared across mirrors,
+        // so triggering via net52 works regardless of which mirror served home.
+        for (triggerHost in listOf("userver.net52.cc", "userver.$host")) {
+            try {
+                app.get(
+                    "https://$triggerHost/?hee5=${java.net.URLEncoder.encode(addhash, "UTF-8")}&a=y&t=${System.currentTimeMillis()}",
+                    headers = mapOf(
+                        "User-Agent" to NETMIRROR_MOBILE_UA,
+                        "Referer" to "$mainUrl/mobile/home?app=1"
+                    ),
+                    timeout = 60
+                )
+                break
+            } catch (_: Exception) {
+                continue
+            }
+        }
 
         // 3. Poll verify2.php until "All Done" (~30-45s in practice, cap ~80s)
         repeat(20) {
@@ -493,7 +508,21 @@ suspend fun getNewTvUserToken(apiBase: String, ott: String, forceRefresh: Boolea
 
 suspend fun solveBypassInWebView(): String {
     val ctx = NetflixMirrorProvider.context ?: return ""
-    val verifyUrl = "https://net77.cc/verify2"
+    // Mirror set: the page may redirect between mirrors; t_hash_t lands on
+    // whichever domain finally served the challenge, so we scan them all.
+    val cookieUrls = mutableListOf("https://net77.cc", "https://net52.cc", "https://net50.cc")
+    var lastPageHost = ""
+    fun addCookieUrl(url: String?) {
+        val root = url?.let {
+            Regex("""https?://([^/]+)""").find(it)?.groupValues?.get(1)
+        }?.lowercase() ?: return
+        if (root.isNotEmpty() && !root.contains("cloudflare") && "https://$root" !in cookieUrls &&
+            (root.contains("net") || root.contains("mirror"))
+        ) {
+            lastPageHost = root
+            cookieUrls.add("https://$root")
+        }
+    }
     return withContext(Dispatchers.Main) {
         suspendCancellableCoroutine { cont ->
             try {
@@ -512,26 +541,28 @@ suspend fun solveBypassInWebView(): String {
                 var resolved = false
                 fun extractAndFinish() {
                     if (resolved) return
-                    // Check all cookies for t_hash_t from net77.cc domain
-                    val cookies = cookieManager.getCookie(verifyUrl)
-                        ?: cookieManager.getCookie("https://net77.cc")
-                        ?: ""
-                    val match = Regex("""t_hash_t=([^;]+)""").find(cookies)
-                    val tHash = match?.groupValues?.get(1)
-                    if (!tHash.isNullOrEmpty()) {
-                        resolved = true
-                        try { wv.destroy() } catch (_: Exception) {}
-                        try {
-                            val tag = wv.tag
-                            if (tag is android.app.Dialog) tag.dismiss()
-                        } catch (_: Exception) {}
-                        cont.resume(tHash)
+                    // t_hash_t lands on whichever mirror domain finally served the
+                    // challenge (net77 redirects to net50/net52), so scan them all.
+                    for (cu in cookieUrls) {
+                        val cookies = try { cookieManager.getCookie(cu) } catch (_: Exception) { null } ?: ""
+                        val tHash = Regex("""t_hash_t=([^;]+)""").find(cookies)?.groupValues?.get(1)
+                        if (!tHash.isNullOrEmpty()) {
+                            resolved = true
+                            try { wv.destroy() } catch (_: Exception) {}
+                            try {
+                                val tag = wv.tag
+                                if (tag is android.app.Dialog) tag.dismiss()
+                            } catch (_: Exception) {}
+                            cont.resume(tHash)
+                            return
+                        }
                     }
                 }
 
                 wv.webViewClient = object : WebViewClient() {
                     override fun onPageFinished(view: WebView?, url: String?) {
                         super.onPageFinished(view, url)
+                        addCookieUrl(url)
                         extractAndFinish()
                         if (!resolved) {
                             val handler = Handler(Looper.getMainLooper())
@@ -550,12 +581,18 @@ suspend fun solveBypassInWebView(): String {
                 }
 
                 val dp = ctx.resources.displayMetrics.density
-                val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-                val metrics = Point()
-                wm.defaultDisplay.getSize(metrics)
+                // Split-view/multi-window safe sizing: defaultDisplay returns the
+                // FULL screen while the app window may be half; displayMetrics of
+                // the context reflect the actual window configuration.
+                val winW = ctx.resources.displayMetrics.widthPixels
+                val winH = ctx.resources.displayMetrics.heightPixels
+                if (winW <= 0 || winH <= 0) {
+                    try { cont.resume("") } catch (_: Exception) {}
+                    return@suspendCancellableCoroutine
+                }
                 val params = WindowManager.LayoutParams(
-                    (metrics.x * 0.95f).toInt(),
-                    (metrics.y * 0.9f).toInt()
+                    (winW * 0.95f).toInt(),
+                    (winH * 0.9f).toInt()
                 )
                 val wrapper = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
                 val infoBar = TextView(ctx).apply {
@@ -601,8 +638,8 @@ suspend fun solveBypassInWebView(): String {
                     }
                     container.addView(cursorView)
 
-                    val cursorX = (metrics.x * 0.95f) / 2f
-                    val cursorY = (metrics.y * 0.9f) / 2f
+                    val cursorX = (winW * 0.95f) / 2f
+                    val cursorY = (winH * 0.9f) / 2f
 
                     container.viewTreeObserver.addOnGlobalLayoutListener(object : ViewTreeObserver.OnGlobalLayoutListener {
                         override fun onGlobalLayout() {
@@ -668,7 +705,12 @@ suspend fun solveBypassInWebView(): String {
                 wrapper.addView(infoBar)
                 wrapper.addView(container)
                 dialog.show()
-                wv.loadUrl(verifyUrl)
+                // Turnstile needs a focused view; in split-view the dialog window
+                // does not get focus automatically, causing endless challenge loops.
+                wv.requestFocus()
+                Handler(Looper.getMainLooper()).postDelayed({ try { wv.requestFocus() } catch (_: Exception) {} }, 500L)
+                Handler(Looper.getMainLooper()).postDelayed({ try { wv.requestFocus() } catch (_: Exception) {} }, 2500L)
+                wv.loadUrl("https://net77.cc/verify2")
             } catch (e: Exception) {
                 cont.resume("")
             }

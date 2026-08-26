@@ -200,7 +200,11 @@ suspend fun netMirrorMobileLoadLinks(
     for (src in sources) {
         val file = src.file ?: continue
         if (file.contains("in=unknown")) continue
-        val url = if (file.startsWith("http")) file else "$mainUrl$file"
+        val url = when {
+            file.startsWith("https:///") -> file.replace("https:///", "$mainUrl/")
+            file.startsWith("http") -> file
+            else -> "$mainUrl$file"
+        }
         val label = src.label?.takeIf { it.isNotBlank() } ?: "Auto"
         callback.invoke(
             newExtractorLink(name, "$label - $title", url, ExtractorLinkType.M3U8) {

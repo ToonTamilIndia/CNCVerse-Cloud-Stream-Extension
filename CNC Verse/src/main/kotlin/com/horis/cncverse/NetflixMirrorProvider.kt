@@ -252,7 +252,10 @@ class NetflixMirrorProvider : MainAPI() {
             } catch (_: Exception) { null }
         }
 
-        val videoLink = response?.video_link?.takeIf { it.isNotBlank() } ?: return false
+        val rawVideoLink = response?.video_link?.takeIf { it.isNotBlank() } ?: return false
+        val videoLink = if (rawVideoLink.startsWith("https:///")) {
+            rawVideoLink.replace("https:///", "$mainUrl/")
+        } else rawVideoLink
         val referer = response?.referer?.takeIf { it.isNotBlank() } ?: apiBase
 
         callback.invoke(

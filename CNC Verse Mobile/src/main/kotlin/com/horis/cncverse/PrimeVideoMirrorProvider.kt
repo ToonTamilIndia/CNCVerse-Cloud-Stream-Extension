@@ -256,19 +256,19 @@ class PrimeVideoMirrorProvider : MainAPI() {
         return object : Interceptor {
             override fun intercept(chain: Interceptor.Chain): Response {
                 val request = chain.request()
-                val url = request.url.toString()
-                if (url.contains(".m3u8") || url.contains(".ts") || url.contains(".mp4") ||
-                    url.contains("cdn") || url.contains("video")) {
-                    val builder = request.newBuilder()
-                    for ((key, value) in videoHeaders) {
-                        builder.header(key, value)
-                    }
-                    if (request.header("Referer").isNullOrBlank()) {
-                        builder.header("Referer", extractorLink.referer)
-                    }
-                    return chain.proceed(builder.build())
+                val rawUrl = request.url.toString()
+                val targetUrl = if (rawUrl.startsWith("https:///")) {
+                    rawUrl.replace("https:///", "$mainUrl/")
+                } else rawUrl
+
+                val builder = request.newBuilder().url(targetUrl)
+                for ((key, value) in videoHeaders) {
+                    builder.header(key, value)
                 }
-                return chain.proceed(request)
+                if (request.header("Referer").isNullOrBlank()) {
+                    builder.header("Referer", extractorLink.referer)
+                }
+                return chain.proceed(builder.build())
             }
         }
     }

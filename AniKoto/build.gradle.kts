@@ -4,7 +4,7 @@ version = 7
 cloudstream {
     language = "en"
     description = "Anime Provider"
-    authors = listOf("toonTamilIndia")
+    authors = listOf("ToonTamilIndia")
     status = 1
     tvTypes = listOf("Anime", "TvSeries")
     requiresResources = false

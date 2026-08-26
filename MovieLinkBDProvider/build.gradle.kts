@@ -4,7 +4,7 @@ version = 17
 
 cloudstream {
     description = "MovieLinkBD - Largest Movie Download Site in Bangladesh"
-    authors = listOf("toonTamilIndia")
+    authors = listOf("ToonTamilIndia")
 
     /**
     * Status int as the following:

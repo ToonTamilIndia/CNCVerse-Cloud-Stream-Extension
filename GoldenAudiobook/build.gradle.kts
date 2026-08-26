@@ -6,7 +6,7 @@ cloudstream {
     // All of these properties are optional, you can safely remove them
 
     description = "Audiobooks - Use Picture in Picture or VLC as external player"
-    authors = listOf("toonTamilIndia")
+    authors = listOf("ToonTamilIndia")
 
     /**
      * Status int as the following:

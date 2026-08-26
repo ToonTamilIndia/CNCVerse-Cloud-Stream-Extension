@@ -4,7 +4,7 @@ version = 31
 cloudstream {
     language = "en"
     description = "LibriVox Audiobooks"
-    authors = listOf("toonTamilIndia")
+    authors = listOf("ToonTamilIndia")
     status = 1
     tvTypes = listOf("Audiobook")
     requiresResources = false

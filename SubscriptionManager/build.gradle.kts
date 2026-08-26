@@ -10,7 +10,7 @@ dependencies {
 cloudstream {
     language = "en"
     description = "Subscription Management"
-    authors = listOf("toonTamilIndia")
+    authors = listOf("ToonTamilIndia")
     status = 1
     tvTypes = listOf("Settings")
     requiresResources = true

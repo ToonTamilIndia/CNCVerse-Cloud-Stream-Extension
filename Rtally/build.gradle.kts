@@ -8,7 +8,7 @@ android {
 
 cloudstream {
     description = "Movie and TV Series provider"
-    authors = listOf("Redowan, toonTamilIndia")
+    authors = listOf("Redowan, ToonTamilIndia")
 
     /**
     * Status int as the following:
@@ -28,5 +28,5 @@ cloudstream {
     )
     language = "en"
 
-    iconUrl = "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/Rtally/icon.png"
+    iconUrl = "https://github.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/Rtally/icon.png"
 }

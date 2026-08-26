@@ -35,8 +35,8 @@ subprojects {
     apply(plugin = "com.lagradost.cloudstream3.gradle")
 
     cloudstream {
-        setRepo("https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension")
-        authors = listOf("toonTamilIndia")
+        setRepo("https://github.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension")
+        authors = listOf("ToonTamilIndia")
     }
 
     android {

@@ -9,7 +9,7 @@ dependencies {
 cloudstream {
     language = "en"
     description = "Watch Live TV channels & sports via PlayZTV"
-    authors = listOf("toonTamilIndia")
+    authors = listOf("ToonTamilIndia")
 
     /**
      * Status int as the following:

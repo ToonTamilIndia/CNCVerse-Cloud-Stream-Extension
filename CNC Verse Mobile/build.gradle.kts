@@ -1,4 +1,4 @@
-version = 7
+version = 8
 
 
 dependencies {
@@ -10,7 +10,7 @@ dependencies {
 cloudstream {
     language = "ta"
     description = "Netflix, PrimeVideo, Disney+ Hotstar Contents in Multiple Languages (Mobile)"
-    authors = listOf("toonTamilIndia")
+    authors = listOf("ToonTamilIndia")
 
     status = 1
     tvTypes = listOf(
@@ -20,5 +20,5 @@ cloudstream {
 
     requiresResources = true
 
-    iconUrl = "https://github.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/CNC%20Verse%20Mobile/logo.jpeg"
+    iconUrl = "https://github.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/CNC%20Verse%20Mobile/logo.jpeg"
 }

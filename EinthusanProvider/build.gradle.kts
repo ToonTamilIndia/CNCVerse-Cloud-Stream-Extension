@@ -8,7 +8,7 @@ cloudstream {
 
     description = "Indian Multi-language HD Provider"
     language = "ta"
-    authors = listOf("toonTamilIndia")
+    authors = listOf("ToonTamilIndia")
 
     /**
     * Status int as the following:
@@ -25,5 +25,5 @@ cloudstream {
     tvTypes = listOf(
         "Movie"
     )
-    iconUrl = "https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/master/EinthusanProvider/icon.png"
+    iconUrl = "https://raw.githubusercontent.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/master/EinthusanProvider/icon.png"
 }

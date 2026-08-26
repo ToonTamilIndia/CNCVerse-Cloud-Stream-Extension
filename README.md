@@ -21,7 +21,7 @@ CloudStream 3 ([View Docs](https://recloudstream.github.io/csdocs/))
 ### To Install Repo
 
 ```
-https://raw.githubusercontent.com/toonTamilIndia/CNCVerse-Cloud-Stream-Extension/refs/heads/builds/CNC.json
+https://raw.githubusercontent.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/refs/heads/builds/CNC.json
 ```
 
 ### License

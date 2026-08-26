@@ -6,7 +6,7 @@ cloudstream {
     language = "en"
     // All of these properties are optional, you can safely remove them
     description = "HDO provider"
-    authors = listOf("toonTamilIndia")
+    authors = listOf("ToonTamilIndia")
     /**
      * Status int as the following:
      * 0: Down

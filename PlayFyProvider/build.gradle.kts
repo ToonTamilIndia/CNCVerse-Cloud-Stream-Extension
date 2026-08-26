@@ -9,7 +9,7 @@ dependencies {
 cloudstream {
     language = "en"
     description = "Watch Live IPTV Channels and Live Events via PlayFy"
-    authors = listOf("toonTamilIndia")
+    authors = listOf("ToonTamilIndia")
 
     status = 1
     tvTypes = listOf(

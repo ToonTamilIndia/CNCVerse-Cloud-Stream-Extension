@@ -6,7 +6,7 @@ cloudstream {
     language = "en"
 
     description = "Radio India Provider"
-    authors = listOf("toonTamilIndia")
+    authors = listOf("ToonTamilIndia")
 
     status = 1 
     tvTypes = listOf("Live")

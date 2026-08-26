@@ -20,8 +20,7 @@ import androidx.core.content.res.ResourcesCompat
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.lagradost.cloudstream3.CommonActivity.showToast
 
-// Studio toggle entry for CNCVerse
-data class StudioOption(val key: String, val label: String, val cookieValue: String)
+
 
 class CNCVerseSettings(
     private val plugin: CNCVersePlugin,

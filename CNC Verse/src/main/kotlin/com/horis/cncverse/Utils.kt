@@ -265,6 +265,60 @@ suspend fun ensureBypass(mainUrl: String): String {
     }
 }
 
+suspend fun tvBypass(mainUrl: String): String {
+    val (savedCookie, savedTimestamp) = NetflixMirrorStorage.getCookie()
+    if (!savedCookie.isNullOrEmpty() && System.currentTimeMillis() - savedTimestamp < 54_000_000L) {
+        return savedCookie
+    }
+    return try {
+        val client = okhttp3.OkHttpClient.Builder()
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .build()
+        val formBody = okhttp3.FormBody.Builder()
+            .add("g-recaptcha-response", UUID.randomUUID().toString())
+            .build()
+        val request = okhttp3.Request.Builder()
+            .url("https://net52.cc/verify.php")
+            .post(formBody)
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36")
+            .header("Origin", "https://net22.cc")
+            .header("Referer", "https://net22.cc/verify2")
+            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
+            .header("Accept-Language", "en-US,en;q=0.9")
+            .header("Cache-Control", "max-age=0")
+            .header("Connection", "keep-alive")
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .header("sec-ch-ua", "\"Google Chrome\";v=\"147\", \"Not.A/Brand\";v=\"8\", \"Chromium\";v=\"147\"")
+            .header("sec-ch-ua-mobile", "?0")
+            .header("sec-ch-ua-platform", "\"Windows\"")
+            .header("Sec-Fetch-Dest", "document")
+            .header("Sec-Fetch-Mode", "navigate")
+            .header("Sec-Fetch-Site", "same-site")
+            .header("Sec-Fetch-User", "?1")
+            .header("Upgrade-Insecure-Requests", "1")
+            .build()
+
+        val response = withContext(Dispatchers.IO) {
+            client.newCall(request).execute()
+        }
+        val cookies = response.headers("Set-Cookie")
+        var cookieValue = ""
+        for (cookie in cookies) {
+            if (cookie.startsWith("t_hash_t=")) {
+                cookieValue = cookie.substringAfter("t_hash_t=").substringBefore(";")
+                break
+            }
+        }
+        if (cookieValue.isNotEmpty()) {
+            NetflixMirrorStorage.saveCookie(cookieValue)
+        }
+        cookieValue
+    } catch (e: Exception) {
+        ""
+    }
+}
+
 suspend fun bypass(mainUrl: String): String {
     return ensureBypass(mainUrl)
 }
@@ -272,6 +326,11 @@ suspend fun bypass(mainUrl: String): String {
 private suspend fun doBypass(mainUrl: String, allowWebView: Boolean): String {
     if (isCookieValid()) {
         return NetflixMirrorStorage.getCookie().first ?: ""
+    }
+
+    val tvCookie = tvBypass(mainUrl)
+    if (tvCookie.isNotEmpty()) {
+        return tvCookie
     }
 
     val newCookie = netMirrorMobileBypass(mainUrl)
@@ -436,15 +495,7 @@ fun buildNewTvHeaders(ott: String, extra: Map<String, String> = emptyMap()): Map
     return result
 }
 
-data class NewTvTokenResponse(
-    val token_hash: String? = null
-)
 
-data class NewTvPlayerResponse(
-    val status: String? = null,
-    val video_link: String? = null,
-    val referer: String? = null
-)
 
 const val NETMIRROR_TV_URL = "https://netmirror.gg/tv"
 

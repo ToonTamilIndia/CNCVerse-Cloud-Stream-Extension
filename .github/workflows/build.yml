@@ -11,6 +11,7 @@ on:
       - master
     paths-ignore:
       - '*.md'
+      - 'agent.md'
 
 jobs:
   build:
@@ -31,8 +32,13 @@ jobs:
 
       - name: Clean old builds
         run: |
-          rm $GITHUB_WORKSPACE/builds/*.cs3 || true
-          rm $GITHUB_WORKSPACE/builds/*.jar || true
+          # NOTE: some plugin names contain spaces ("CNC Verse.cs3"), so every
+          # glob has to be null-delimited. Plain `rm *.cs3` silently breaks on
+          # those files and leaves stale artifacts behind.
+          find "$GITHUB_WORKSPACE/builds" -maxdepth 1 -type f \( -name '*.cs3' -o -name '*.jar' \) -delete
+          # gradle state must never end up on the published branch
+          rm -rf "$GITHUB_WORKSPACE/builds/.gradle" "$GITHUB_WORKSPACE/builds/.kotlin"
+          find "$GITHUB_WORKSPACE/builds" -maxdepth 1 -type d -name build -exec rm -rf {} + 2>/dev/null || true
 
       - name: Setup JDK 17
         uses: actions/setup-java@v4
@@ -45,20 +51,58 @@ jobs:
 
       - name: Build Plugins
         run: |
-          cd $GITHUB_WORKSPACE/src
+          cd "$GITHUB_WORKSPACE/src"
           chmod +x gradlew
           ./gradlew make makePluginsJson --no-daemon
           ./gradlew ensureJarCompatibility --no-daemon || true
-          cp **/build/*.cs3 $GITHUB_WORKSPACE/builds
-          cp **/build/*.jar $GITHUB_WORKSPACE/builds 2>/dev/null || true
-          cp build/plugins.json $GITHUB_WORKSPACE/builds
-          cp CNC.json cnc.png $GITHUB_WORKSPACE/builds 2>/dev/null || true
+          # Copy the packaged plugins. `find -print0 | xargs -0` is used because
+          # several plugin names contain spaces, which breaks a plain glob.
+          find "$GITHUB_WORKSPACE/src" -mindepth 3 -maxdepth 3 -type f -name '*.cs3' \
+            -exec cp -p {} "$GITHUB_WORKSPACE/builds/" \;
+          find "$GITHUB_WORKSPACE/src" -mindepth 3 -maxdepth 3 -type f -name '*.jar' \
+            -exec cp -p {} "$GITHUB_WORKSPACE/builds/" \; 2>/dev/null || true
+          cp -f "$GITHUB_WORKSPACE/src/build/plugins.json" "$GITHUB_WORKSPACE/builds/plugins.json"
+          cp -f "$GITHUB_WORKSPACE/src/CNC.json" "$GITHUB_WORKSPACE/builds/CNC.json"
+          cp -f "$GITHUB_WORKSPACE/src/cnc.png" "$GITHUB_WORKSPACE/builds/cnc.png"
+          ls -la "$GITHUB_WORKSPACE/builds"
+
+      - name: Verify published artifacts
+        run: |
+          cd "$GITHUB_WORKSPACE/builds"
+          python3 - <<'PY'
+          import hashlib, json, os, sys
+          entries = json.load(open("plugins.json"))
+          if not isinstance(entries, list):
+              sys.exit("plugins.json is not a JSON array")
+          bad = []
+          for e in entries:
+              name = e.get("url", "").rsplit("/", 1)[-1]
+              path = os.path.join(".", name)
+              if not os.path.isfile(path):
+                  bad.append(f"{name}: MISSING")
+                  continue
+              size = os.path.getsize(path)
+              h = "sha256-" + hashlib.sha256(open(path, "rb").read()).hexdigest()
+              if size != e.get("fileSize"):
+                  bad.append(f"{name}: fileSize {e.get('fileSize')} != {size}")
+              if h != e.get("fileHash"):
+                  bad.append(f"{name}: fileHash mismatch")
+          if bad:
+              print("\n".join(bad))
+              sys.exit("plugins.json does not match the built artifacts")
+          print(f"OK: {len(entries)} plugins match plugins.json")
+          PY
 
       - name: Push builds
         run: |
-          cd $GITHUB_WORKSPACE/builds
+          cd "$GITHUB_WORKSPACE/builds"
           git config --local user.email "actions@github.com"
           git config --local user.name "GitHub Actions"
-          git add .
-          git commit --amend -m "Build $GITHUB_SHA" || git commit -m "Build $GITHUB_SHA" || exit 0
+          git rm -r --cached .gradle .kotlin 2>/dev/null || true
+          git add -A
+          if git diff --cached --quiet; then
+            echo "nothing to publish"
+            exit 0
+          fi
+          git commit -m "Build $GITHUB_SHA"
           git push --force origin builds

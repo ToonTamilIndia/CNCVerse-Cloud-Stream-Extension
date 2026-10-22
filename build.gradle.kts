@@ -4,6 +4,22 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile
 
 buildscript {
+    // ── CloudStream gradle plugin ─────────────────────────────────────────────
+    // Published from the multi-module repo `recloudstream/gradle` through
+    // JitPack. Only *commit-sha* versions of the `gradle` submodule are
+    // published under a matching maven coordinate; the branch coordinates
+    // (`master-SNAPSHOT`, `master-master-SNAPSHOT`, ...) resolve to a POM that
+    // declares a different version and therefore trip Gradle's
+    // "inconsistent module metadata / bad version" check, which breaks the
+    // whole build during configuration.
+    //
+    // To update the plugin, bump the commit sha below to a revision of
+    // https://github.com/recloudstream/gradle that has been built by JitPack
+    // (verify with:
+    //   curl -sI https://jitpack.io/com/github/recloudstream/gradle/gradle/<sha>/gradle-<sha>.pom
+    // ).
+    val csGradlePluginVersion = "81b1d424d"
+
     repositories {
         google()
         mavenCentral()
@@ -12,7 +28,7 @@ buildscript {
 
     dependencies {
         classpath("com.android.tools.build:gradle:8.13.2")
-        classpath("com.github.recloudstream:gradle:master-SNAPSHOT")
+        classpath("com.github.recloudstream.gradle:gradle:$csGradlePluginVersion")
         classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.3.0")
     }
 }

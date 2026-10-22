@@ -36,3 +36,30 @@ $RECYCLE.BIN/
 *.pyc
 __pycache__/
 instruction.md
+
+# local-only agent runbooks / notes
+agent.md
+AGENT.md
+Agent.md
+agents.md
+*.agent.md
+.opencode/
+
+# build outputs
+.gradle/
+**/build/
+build/
+.kotlin/
+*.cs3
+*.jar
+*.aab
+*.apk
+*.dex
+*.class
+*.log
+out/
+dist/
+captures/
+.externalNativeBuild/
+.cxx/
+local.properties

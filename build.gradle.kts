@@ -65,14 +65,19 @@ subprojects {
         }
 
         compileOptions {
-            sourceCompatibility = JavaVersion.VERSION_1_8
-            targetCompatibility = JavaVersion.VERSION_1_8
+            // The `com.lagradost:cloudstream3:pre-release` artifact is compiled
+            // for JVM 11, so our modules must match. Compiling at 1.8 makes the
+            // Kotlin compiler reject inlining its bytecode ("Cannot inline
+            // bytecode built with JVM target 11 ..."). This also keeps CI and
+            // local builds identical regardless of the host JDK.
+            sourceCompatibility = JavaVersion.VERSION_11
+            targetCompatibility = JavaVersion.VERSION_11
         }
 
 
         tasks.withType<KotlinJvmCompile> {
             compilerOptions {
-                jvmTarget.set(JvmTarget.JVM_1_8)
+                jvmTarget.set(JvmTarget.JVM_11)
                 freeCompilerArgs.addAll(
                     "-Xno-call-assertions",
                     "-Xno-param-assertions",

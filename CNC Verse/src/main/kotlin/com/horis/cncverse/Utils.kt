@@ -90,9 +90,7 @@ inline fun <reified T : Any> tryParseJson(text: String): T? {
 
 fun convertRuntimeToMinutes(runtime: String): Int {
     var totalMinutes = 0
-
     val parts = runtime.split(" ")
-
     for (part in parts) {
         when {
             part.endsWith("h") -> {
@@ -105,7 +103,6 @@ fun convertRuntimeToMinutes(runtime: String): Int {
             }
         }
     }
-
     return totalMinutes
 }
 
@@ -203,7 +200,11 @@ suspend fun netMirrorMobileLoadLinks(
     for (src in sources) {
         val file = src.file ?: continue
         if (file.contains("in=unknown")) continue
-        val url = if (file.startsWith("http")) file else "$mainUrl$file"
+        val url = when {
+            file.startsWith("https:///") -> file.replace("https:///", "$mainUrl/")
+            file.startsWith("http") -> file
+            else -> "$mainUrl$file"
+        }
         val label = src.label?.takeIf { it.isNotBlank() } ?: "Auto"
         callback.invoke(
             newExtractorLink(name, "$label - $title", url, ExtractorLinkType.M3U8) {
@@ -220,63 +221,76 @@ suspend fun netMirrorMobileLoadLinks(
     return emitted
 }
 
-suspend fun bypass(mainUrl: String): String {
-    val cookie = NetflixMirrorStorage.getCookie()
-    val savedCookie = cookie.first
-    val savedTimestamp = cookie.second
-    if (!savedCookie.isNullOrEmpty() && System.currentTimeMillis() - savedTimestamp < 54000000) {
-        return savedCookie
+private val bypassScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+private val inflightLock = Any()
+@Volatile private var inflightBypass: Deferred<String>? = null
+
+private fun isCookieValid(): Boolean {
+    val (savedCookie, savedTimestamp) = NetflixMirrorStorage.getCookie()
+    return !savedCookie.isNullOrEmpty() && (System.currentTimeMillis() - savedTimestamp < 43_200_000)
+}
+
+fun primeBypass(mainUrl: String) {
+    if (isCookieValid()) return
+    synchronized(inflightLock) {
+        if (isCookieValid()) return
+        if (inflightBypass?.isActive == true) return
+        inflightBypass = bypassScope.async {
+            doBypass(mainUrl, allowWebView = false)
+        }
     }
-    return try {
-        val headers = mapOf(
-            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-            "Accept-Encoding" to "gzip, deflate, br, zstd",
-            "Accept-Language" to "en-US,en;q=0.9",
-            "Cache-Control" to "max-age=0",
-            "Connection" to "keep-alive",
-            "Content-Type" to "application/x-www-form-urlencoded",
-            "Origin" to "https://net22.cc",
-            "Referer" to "https://net22.cc/verify2",
-            "sec-ch-ua" to "\"Google Chrome\";v=\"147\", \"Not.A/Brand\";v=\"8\", \"Chromium\";v=\"147\"",
-            "sec-ch-ua-mobile" to "?0",
-            "sec-ch-ua-platform" to "\"Windows\"",
-            "Sec-Fetch-Dest" to "document",
-            "Sec-Fetch-Mode" to "navigate",
-            "Sec-Fetch-Site" to "same-origin",
-            "Sec-Fetch-User" to "?1",
-            "Upgrade-Insecure-Requests" to "1",
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
-        )
-        val formBody = okhttp3.FormBody.Builder()
-            .add("g-recaptcha-response", UUID.randomUUID().toString())
-            .build()
-        val client = app.getBaseClient().newBuilder()
-            .followRedirects(false)
-            .followSslRedirects(false)
-            .build()
-        val requestBuilder = okhttp3.Request.Builder()
-            .url("https://net52.cc/verify.php")
-            .post(formBody)
-        for ((key, value) in headers) {
-            requestBuilder.addHeader(key, value)
+}
+
+suspend fun ensureBypass(mainUrl: String): String {
+    if (isCookieValid()) {
+        return NetflixMirrorStorage.getCookie().first ?: ""
+    }
+
+    val activeJob = synchronized(inflightLock) {
+        if (isCookieValid()) {
+            return NetflixMirrorStorage.getCookie().first ?: ""
         }
-        val response = withContext(Dispatchers.IO) {
-            client.newCall(requestBuilder.build()).execute()
-        }
-        var cookieValue = ""
-        for (cookieHeader in response.headers("Set-Cookie")) {
-            if (cookieHeader.startsWith("t_hash_t=")) {
-                cookieValue = cookieHeader.substringAfter("t_hash_t=").substringBefore(";")
-                break
+        inflightBypass?.takeIf { it.isActive } ?: run {
+            val d = bypassScope.async {
+                doBypass(mainUrl, allowWebView = true)
             }
+            inflightBypass = d
+            d
         }
-        if (cookieValue.isNotEmpty()) {
-            NetflixMirrorStorage.saveCookie(cookieValue)
-        }
-        cookieValue
-    } catch (e: Exception) {
-        ""
     }
+
+    return try {
+        activeJob.await()
+    } catch (_: Exception) {
+        NetflixMirrorStorage.getCookie().first ?: ""
+    }
+}
+
+suspend fun bypass(mainUrl: String): String {
+    return ensureBypass(mainUrl)
+}
+
+private suspend fun doBypass(mainUrl: String, allowWebView: Boolean): String {
+    if (isCookieValid()) {
+        return NetflixMirrorStorage.getCookie().first ?: ""
+    }
+
+    val newCookie = netMirrorMobileBypass(mainUrl)
+    if (newCookie.isNotEmpty()) {
+        NetflixMirrorStorage.saveCookie(newCookie)
+        return newCookie
+    }
+
+    if (!allowWebView) {
+        return ""
+    }
+
+    val wvCookie = solveBypassInWebView()
+    if (wvCookie.isNotEmpty()) {
+        NetflixMirrorStorage.saveCookie(wvCookie)
+        return wvCookie
+    }
+    return ""
 }
 
 private suspend fun netMirrorMobileBypass(mainUrl: String): String {
@@ -397,11 +411,6 @@ private var resolvedApiUrl: String = ""
 
 suspend fun resolveApiUrl(): String {
     if (resolvedApiUrl.isNotBlank()) return resolvedApiUrl
-    val (savedApiBase, savedApiBaseTimestamp) = NetflixMirrorStorage.getApiBase()
-    if (!savedApiBase.isNullOrEmpty() && System.currentTimeMillis() - savedApiBaseTimestamp < 86400000) {
-        resolvedApiUrl = savedApiBase.trimEnd('/')
-        return resolvedApiUrl
-    }
     for (encoded in newTvDomains) {
         val base = decodeBase64(encoded).trimEnd('/')
         try {
@@ -410,11 +419,9 @@ suspend fun resolveApiUrl(): String {
             val tokenHash = response.token_hash
             if (!tokenHash.isNullOrBlank()) {
                 resolvedApiUrl = decodeBase64(tokenHash).trimEnd('/')
-                NetflixMirrorStorage.saveApiBase(resolvedApiUrl)
                 return resolvedApiUrl
             }
         } catch (_: Exception) {
-            // Try next domain.
         }
     }
     throw Exception("Failed to resolve NewTV API base URL")
@@ -429,7 +436,15 @@ fun buildNewTvHeaders(ott: String, extra: Map<String, String> = emptyMap()): Map
     return result
 }
 
-
+data class NewTvOtpResponse(
+    val otp: String? = null,
+    val status: String? = null,
+    val usertoken: String? = null,
+    val pub_msg: String? = null,
+    val pub_msg_f_size: Int? = null,
+    val pub_msg_color: String? = null,
+    val error_msg: String? = null
+)
 
 const val NETMIRROR_TV_URL = "https://netmirror.gg/tv"
 
@@ -476,24 +491,22 @@ suspend fun fetchNetmirrorTvHtml(): String {
 }
 
 suspend fun getNewTvUserToken(apiBase: String, ott: String, forceRefresh: Boolean = false): String {
-    val (savedToken, _) = NetflixMirrorStorage.getUserToken(ott)
+    val (savedToken, savedTimestamp) = NetflixMirrorStorage.getUserToken(ott)
     if (!forceRefresh && !savedToken.isNullOrEmpty()) return savedToken
 
-    var currentOtpRef = object {
-        var value: String = NetflixMirrorStorage.getOtp() ?: "109400"
-    }
-    val otpHeaders = mapOf(
+    var currentOtp = NetflixMirrorStorage.getOtp() ?: "109400"
+    val otpHeaders = mutableMapOf(
         "accept" to "application/json, text/plain, */*",
         "cache-control" to "no-cache, no-store, must-revalidate",
         "Connection" to "Keep-Alive",
         "expires" to "0",
-        "otp" to currentOtpRef.value,
+        "otp" to currentOtp,
         "pragma" to "no-cache",
         "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.Gatu v1.0"
     )
 
-    var otpResponse: NewTvOtpResponse? = try {
-        app.get("$apiBase/newtv/otp.php", headers = otpHeaders).parsedSafe<NewTvOtpResponse>()
+    var otpResponse = try {
+        app.get("$apiBase/newtv/otp.php", otpHeaders).parsedSafe<NewTvOtpResponse>()
     } catch (e: Exception) {
         null
     }
@@ -507,13 +520,11 @@ suspend fun getNewTvUserToken(apiBase: String, ott: String, forceRefresh: Boolea
             if (otpMatch != null) {
                 val newOtp = Regex("""\s*,\s*""").replace(otpMatch.groupValues[1], "").replace(" ", "")
                 if (newOtp.isNotEmpty()) {
-                    currentOtpRef.value = newOtp
-                    NetflixMirrorStorage.saveOtp(currentOtpRef.value)
-                    val updatedHeaders = otpHeaders.toMutableMap().apply {
-                        this["otp"] = currentOtpRef.value
-                    }
+                    currentOtp = newOtp
+                    NetflixMirrorStorage.saveOtp(currentOtp)
+                    otpHeaders["otp"] = currentOtp
                     otpResponse = try {
-                        app.get("$apiBase/newtv/otp.php", headers = updatedHeaders).parsedSafe<NewTvOtpResponse>()
+                        app.get("$apiBase/newtv/otp.php", otpHeaders).parsedSafe<NewTvOtpResponse>()
                     } catch (e: Exception) {
                         null
                     }
@@ -838,61 +849,6 @@ suspend fun solveCloudflareInWebView(url: String): String? {
                     FrameLayout.LayoutParams.MATCH_PARENT
                 )
                 container.addView(wv)
-
-                val isTv = Globals.isLayout(2)
-                val cursorSize = (22 * dp).toInt()
-                if (isTv) {
-                    val cursorView = View(ctx).apply {
-                        layoutParams = FrameLayout.LayoutParams(cursorSize, cursorSize)
-                        val bg = GradientDrawable().apply {
-                            shape = GradientDrawable.OVAL
-                            setColor(Color.argb(160, 255, 50, 50))
-                            setStroke((2 * dp).toInt(), Color.WHITE)
-                        }
-                        setBackgroundDrawable(bg)
-                        elevation = 999f
-                        isFocusable = false
-                    }
-                    container.addView(cursorView)
-
-                    val cursorX = (metrics.x * 0.95f) / 2f
-                    val cursorY = (metrics.y * 0.9f) / 2f
-
-                    container.viewTreeObserver.addOnGlobalLayoutListener(object : ViewTreeObserver.OnGlobalLayoutListener {
-                        override fun onGlobalLayout() {
-                            container.viewTreeObserver.removeOnGlobalLayoutListener(this)
-                            cursorView.translationX = container.width / 2f - cursorSize / 2f
-                            cursorView.translationY = container.height / 2f - cursorSize / 2f
-                        }
-                    })
-
-                    var cx = cursorX
-                    var cy = cursorY
-                    container.setOnKeyListener { _, keyCode, event ->
-                        if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
-                        val step = dp * 10f
-                        when (keyCode) {
-                            KeyEvent.KEYCODE_DPAD_UP -> cy = (cy - step).coerceIn(0f, container.height.toFloat())
-                            KeyEvent.KEYCODE_DPAD_DOWN -> cy = (cy + step).coerceIn(0f, container.height.toFloat())
-                            KeyEvent.KEYCODE_DPAD_LEFT -> cx = (cx - step).coerceIn(0f, container.width.toFloat())
-                            KeyEvent.KEYCODE_DPAD_RIGHT -> cx = (cx + step).coerceIn(0f, container.width.toFloat())
-                            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
-                                val t = SystemClock.uptimeMillis()
-                                val down = MotionEvent.obtain(t, t, MotionEvent.ACTION_DOWN, cx, cy, 0)
-                                val up = MotionEvent.obtain(t, t + 120, MotionEvent.ACTION_UP, cx, cy, 0)
-                                wv.dispatchTouchEvent(down)
-                                wv.dispatchTouchEvent(up)
-                                down.recycle()
-                                up.recycle()
-                                return@setOnKeyListener true
-                            }
-                            else -> return@setOnKeyListener false
-                        }
-                        cursorView.translationX = cx - cursorSize / 2f
-                        cursorView.translationY = cy - cursorSize / 2f
-                        true
-                    }
-                }
 
                 val dialog = AlertDialog.Builder(ctx)
                     .setView(wrapper)

@@ -17,7 +17,9 @@ import com.lagradost.cloudstream3.newMovieLoadResponse
 import com.lagradost.cloudstream3.newMovieSearchResponse
 import com.lagradost.cloudstream3.newTvSeriesLoadResponse
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.INFER_TYPE
 import com.lagradost.cloudstream3.utils.loadExtractor
+import com.lagradost.cloudstream3.utils.newExtractorLink
 import org.jsoup.nodes.Element
 import android.content.Context
 import android.content.Intent
@@ -204,23 +206,55 @@ class MlsbdProvider : MainAPI() {
         data.split(" ; ").forEach { item ->
             val parts = item.split("|")
             val qualityLabel = if (parts.size > 1) parts[0] else ""
-            val link = if (parts.size > 1) parts[1] else item
-            val trimmed = link.trim()
-            if (trimmed.isEmpty()) return@forEach
-            if (trimmed.contains("savelinks")) {
-                val doc = app.get(trimmed).document
+            val link = (if (parts.size > 1) parts[1] else item).trim()
+            if (link.isEmpty()) return@forEach
+            if (link.isSocialOrAuthLink()) return@forEach
+            if (link.contains("savelinks")) {
+                val doc = app.get(link).document
                 // Links are inside <ul><li><a href="..."> on savelinks.me
                 doc.select("ul li a[href^=http]").forEach {
                     val url = it.attr("href").trim()
-                    if (url.isNotEmpty()) {
-                        loadExtractor(url, trimmed, subtitleCallback, callback)
-                    }
+                    if (url.isNotEmpty()) resolveLink(url, qualityLabel, subtitleCallback, callback)
                 }
             } else {
-                loadExtractor(trimmed, trimmed, subtitleCallback, callback)
+                resolveLink(link, qualityLabel, subtitleCallback, callback)
             }
         }
         return true
+    }
+
+    private suspend fun resolveLink(
+        link: String,
+        qualityLabel: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        if (link.isSocialOrAuthLink()) return
+        if (link.contains("pixeldrain.com", ignoreCase = true)) {
+            val id = link.substringAfterLast("/").substringBefore("?")
+            val direct = if (link.contains("download", ignoreCase = true)) link
+            else "https://pixeldrain.com/api/file/$id?download"
+            callback(
+                newExtractorLink(
+                    "Pixeldrain",
+                    "Pixeldrain [$qualityLabel]",
+                    direct,
+                    INFER_TYPE
+                ) {
+                    this.quality = getIndexQuality(qualityLabel)
+                }
+            )
+            return
+        }
+        loadExtractor(link, link, subtitleCallback, callback)
+    }
+
+    private fun String.isSocialOrAuthLink(): Boolean {
+        val socialHosts = listOf(
+            "t.me", "telegram", "whatsapp", "facebook", "twitter",
+            "savelinks.me/login", "savelinks.me/register"
+        )
+        return socialHosts.any { contains(it, ignoreCase = true) }
     }
 
 

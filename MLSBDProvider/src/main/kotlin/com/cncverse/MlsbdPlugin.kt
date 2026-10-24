@@ -21,5 +21,10 @@ class MlsbdPlugin : Plugin() {
         registerExtractorAPI(FilepressNew1())
         registerExtractorAPI(FilepressNew3())
         registerExtractorAPI(FilepressFilebee())
+        registerExtractorAPI(Gofile())
+        registerExtractorAPI(Filesdl())
+        registerExtractorAPI(Shikshakdaak())
+        registerExtractorAPI(M4ulinks())
+        registerExtractorAPI(VCloud())
     }
 }

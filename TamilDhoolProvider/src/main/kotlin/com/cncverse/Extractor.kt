@@ -8,6 +8,8 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.M3u8Helper.Companion.generateM3u8
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.newExtractorLink
+import org.json.JSONObject
+import org.json.JSONTokener
 import java.net.URI
 
 
@@ -110,9 +112,17 @@ class TeamsToday : ExtractorApi() {
             return
         }
 
-        val iframeSrc = iframeSrcRegex.find(destinationHtml)
-            ?.groupValues?.get(1)?.trim()?.let { unescapeUrl(it) }
-            ?.takeIf { it.startsWith("http") } ?: return
+        // Upstream skips `player.*` frames unless they are embeds, then takes the first one.
+        val iframeSrc = iframeSrcRegex.findAll(destinationHtml)
+            .map { unescapeUrl(it.groupValues[1].trim()) }
+            .filter { it.startsWith("http") }
+            .filter { !it.contains("player.", ignoreCase = true) || it.contains("embed", ignoreCase = true) }
+            .firstOrNull() ?: return
+
+        if (iframeSrc.contains("vimeo.com", ignoreCase = true)) {
+            extractVimeo(iframeSrc, redirectTarget, callback)
+            return
+        }
 
         val iframeHtml = app.get(iframeSrc, referer = redirectTarget).text
         val iframeStream = findStreamUrl(iframeHtml)
@@ -124,6 +134,49 @@ class TeamsToday : ExtractorApi() {
         }
 
         loadExtractor(iframeSrc, redirectTarget, subtitleCallback, callback)
+    }
+
+    /**
+     * Ported from upstream TeamsToday: resolves Vimeo player pages by reading the
+     * inline `window.playerConfig` JSON and picking the first usable CDN URL.
+     */
+    private suspend fun extractVimeo(
+        embedUrl: String,
+        pageReferer: String,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val html = app.get(embedUrl, referer = pageReferer).text
+        val configIndex = html.indexOf("window.playerConfig")
+        if (configIndex < 0) return
+        val braceIndex = html.indexOf('{', configIndex)
+        if (braceIndex < 0) return
+
+        val config = runCatching {
+            JSONTokener(html.substring(braceIndex)).nextValue() as? JSONObject
+        }.getOrNull() ?: return
+
+        val hls = config.optJSONObject("request")
+            ?.optJSONObject("files")
+            ?.optJSONObject("hls") ?: return
+        val cdns = hls.optJSONObject("cdns") ?: return
+        val defaultCdn = hls.optString("default_cdn")
+
+        val cdnNames = buildList {
+            add(defaultCdn)
+            cdns.keys().asSequence()
+                .filter { it != defaultCdn }
+                .forEach { add(it) }
+        }
+
+        for (cdn in cdnNames) {
+            val c = cdns.optJSONObject(cdn) ?: continue
+            val rawUrl = c.optString("avc_url").ifBlank { c.optString("url") }
+            if (!rawUrl.startsWith("http")) continue
+            newExtractorLink(name, name, rawUrl, ExtractorLinkType.M3U8) {
+                this.referer = "https://player.vimeo.com/"
+            }?.let(callback)
+            return
+        }
     }
 
     private fun findStreamUrl(html: String): String? {

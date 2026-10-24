@@ -82,8 +82,11 @@ class DesiSerialsProvider : MainAPI() {
         val title = titleElement.text().trim().takeIf { it.isNotBlank() } ?: titleElement.attr("title").trim().takeIf { it.isNotBlank() } ?: "Unknown Series"
         val href = fixUrl(titleElement.attr("href"))
         
-        val imgElement = this.selectFirst("div.post-image img, span.post-image img") ?: this.selectFirst("img")
+        val imgElement = this.selectFirst("div.post-image img, span.post-image img, .porto-sicon-img img") ?: this.selectFirst("img")
         var posterUrl = imgElement?.attr("data-oi")
+        if (posterUrl.isNullOrBlank()) {
+            posterUrl = imgElement?.attr("data-src")
+        }
         if (posterUrl.isNullOrBlank()) {
             posterUrl = imgElement?.attr("src")
         }

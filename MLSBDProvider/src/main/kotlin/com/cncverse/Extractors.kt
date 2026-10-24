@@ -606,6 +606,16 @@ class GDFlixVip : GDFlix() {
     override val mainUrl = "https://gdflix.vip"
 }
 
+/**
+ * Upstream Rtally routes `vcloud.*` hosts through the HubCloud resolver
+ * (`host.contains("hubcloud") || host.contains("vcloud")`), so expose it as a
+ * registered extractor to keep `loadExtractor` parity.
+ */
+class VCloud : HubCloud() {
+    override val name = "VCloud"
+    override val mainUrl = "https://vcloud"
+}
+
 class GDxFiles : ExtractorApi() {
     override val name = "GDxFiles"
     override val mainUrl = "https://gdxfiles.com"

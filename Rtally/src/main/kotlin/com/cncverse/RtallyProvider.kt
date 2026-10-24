@@ -18,6 +18,7 @@ import com.lagradost.cloudstream3.newMovieLoadResponse
 import com.lagradost.cloudstream3.newMovieSearchResponse
 import com.lagradost.cloudstream3.newTvSeriesLoadResponse
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.extractors.VidHidePro
 import com.lagradost.cloudstream3.utils.loadExtractor
 import org.jsoup.nodes.Element
 import java.net.URLDecoder
@@ -52,6 +53,10 @@ class RtallyProvider : MainAPI() {
     )
     private val headers =
         mapOf("user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36")
+
+    // Upstream retries dead `vidhide*` hosts through its current mirror domain.
+    @Volatile private var vidHideMirror = "https://callistanise.com"
+    private val vidHideRegex = Regex("^https?://[^/]*vidhide[^/]*(/.*)$", RegexOption.IGNORE_CASE)
 
     private val fileMoonRegex = Regex("\"multiLinksDl\":\\s*\"([^\"]+)\"")
     private val streamwishMultiUrlRegex = Regex("\"streamwishMultiUrl\":\\s*\"([^\"]+)\"")
@@ -268,6 +273,9 @@ class RtallyProvider : MainAPI() {
             url.contains("vidhidepre.com/d/") -> url.replace("/d/", "/v/")
             url.contains("playerwish.com/d/") || url.contains("filemoon.sx/d/") -> url.replace("/d/", "/e/")
             url.contains("filemoon.sx/download/") -> url.replace("/download/", "/e/")
+            // Upstream also rewrites any `byse*` download link to its embed path.
+            Regex("^https?://byse[^/]*/download/", RegexOption.IGNORE_CASE).containsMatchIn(url) ->
+                url.replace("/download/", "/e/")
             else -> url
         }
     }
@@ -289,10 +297,48 @@ class RtallyProvider : MainAPI() {
                 if (href.startsWith("http") && !href.contains("rtally") && !href.contains("facebook.com") &&
                     !href.contains("t.me") && !href.contains("telegram") && !href.contains("google.com")
                 ) {
-                    loadExtractor(embedify(href), subtitleCallback, callback)
+                    extractWithMirror(embedify(href), subtitleCallback, callback)
                 }
             } catch (e: Exception) {
             }
+        }
+    }
+
+    /**
+     * Ported from upstream Rtally `extract`: `vidhide*` links are tried normally,
+     * then retried through the current `vidHideMirror` host when nothing resolves.
+     */
+    private suspend fun extractWithMirror(
+        url: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val vidHidePath = vidHideRegex.find(url)?.groupValues?.getOrNull(1)
+        if (vidHidePath == null) {
+            loadExtractor(url, subtitleCallback, callback)
+            return
+        }
+
+        var found = false
+        try {
+            loadExtractor(url, subtitleCallback) { link ->
+                found = true
+                callback(link)
+            }
+        } catch (_: Exception) {
+        }
+        if (found) return
+
+        try {
+            val response = app.get(url, allowRedirects = false)
+            val location = response.headers["location"]
+            Regex("^https?://[^/]+").find(location ?: "")?.value?.let { vidHideMirror = it }
+        } catch (_: Exception) {
+        }
+
+        try {
+            VidHidePro().getUrl("$vidHideMirror$vidHidePath", "$mainUrl/", subtitleCallback, callback)
+        } catch (_: Exception) {
         }
     }
 
@@ -311,7 +357,7 @@ class RtallyProvider : MainAPI() {
                 resolveDownloadPage(dlPage, qualityLabel, subtitleCallback, callback)
             } else if (linkUrl.isNotEmpty()) {
                 try {
-                    loadExtractor(linkUrl, subtitleCallback, callback)
+                    extractWithMirror(linkUrl, subtitleCallback, callback)
                 } catch (e: Exception) {
                 }
             }

@@ -170,10 +170,10 @@
     },
     {
         "iconUrl": "https://www.google.com/s2/favicons?domain=desi-serials.to&sz=%size%",
-        "fileHash": "sha256-82b519f248a2ee41fde26394292c7f6d6da0aa74b3e1c82fededccc901753ff9",
+        "fileHash": "sha256-63e6f645e0c74aafd9a65edd0a06ec70b138bd1f4ab36d5974228b6f30f594d2",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension",
-        "fileSize": 32481,
+        "fileSize": 32533,
         "status": 1,
         "language": "hi",
         "authors": [
@@ -182,7 +182,7 @@
         "tvTypes": [
             "TvSeries"
         ],
-        "version": 30,
+        "version": 31,
         "internalName": "DesiSerialsProvider",
         "description": "Desi Serials Tv Shows Provider",
         "url": "https://raw.githubusercontent.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/DesiSerialsProvider.cs3",
@@ -354,10 +354,10 @@
     },
     {
         "iconUrl": "https://mlsbd.co/wp-content/uploads/2020/08/MLSBD-Logo.png",
-        "fileHash": "sha256-613e76c893e40b0928432685d0d40928471d705c2e0511a7b587bcfa718b741b",
+        "fileHash": "sha256-faa5e5c2f96b10e953e95918da3b1a7d2cb47da69f106a41ef06a2d57bf69c47",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension",
-        "fileSize": 61178,
+        "fileSize": 62840,
         "status": 1,
         "language": "bn",
         "authors": [
@@ -369,7 +369,7 @@
             "AnimeMovie",
             "AsianDrama"
         ],
-        "version": 31,
+        "version": 32,
         "internalName": "MLSBDProvider",
         "description": "The largest movie link store in Bangladesh",
         "url": "https://raw.githubusercontent.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/MLSBDProvider.cs3",
@@ -543,10 +543,10 @@
     },
     {
         "iconUrl": "https://github.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/Rtally/icon.png",
-        "fileHash": "sha256-9db715e18061cec98d2247ca0ccb109f0921dc031400a035bc2c52a9b9ef0d90",
+        "fileHash": "sha256-389e846bfd2b85fa260d037156b63eed00d36636cc371c83940021fd8ca6a73f",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension",
-        "fileSize": 64757,
+        "fileSize": 66838,
         "status": 1,
         "language": "en",
         "authors": [
@@ -559,7 +559,7 @@
             "AnimeMovie",
             "AsianDrama"
         ],
-        "version": 49,
+        "version": 50,
         "internalName": "Rtally",
         "description": "Movie and TV Series provider",
         "url": "https://raw.githubusercontent.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/Rtally.cs3",
@@ -649,10 +649,10 @@
     },
     {
         "iconUrl": "https://github.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/TamilDhoolProvider/icon.png",
-        "fileHash": "sha256-2b447ae3013072c8988b121dc57fb5618bfed6020339c6b6734362ce2f50dbaa",
+        "fileHash": "sha256-24c6008ae4aa05285e6078b146f5ec655a8d23ac30bee4b3e83d42b0592855ee",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension",
-        "fileSize": 27504,
+        "fileSize": 30252,
         "status": 1,
         "language": "ta",
         "authors": [
@@ -661,7 +661,7 @@
         "tvTypes": [
             "TvSeries"
         ],
-        "version": 36,
+        "version": 37,
         "internalName": "TamilDhoolProvider",
         "description": "Tamil Tv Serial/Shows Provider",
         "url": "https://raw.githubusercontent.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/TamilDhoolProvider.cs3",

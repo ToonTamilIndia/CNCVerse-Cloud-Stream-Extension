@@ -419,10 +419,10 @@
     },
     {
         "iconUrl": "https://movielinkbd.one/img/favicon-192x192.png",
-        "fileHash": "sha256-3d95da94360ea1eeb7fc4942829e806708c99659d3a8b4a538f7db95edf8bd20",
+        "fileHash": "sha256-c4e9105b941706b239d466470085dfd736b0bb1ee5d4e351ce48ba3df5adec14",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension",
-        "fileSize": 49402,
+        "fileSize": 49401,
         "status": 1,
         "language": "bn",
         "authors": [
@@ -434,7 +434,7 @@
             "AnimeMovie",
             "AsianDrama"
         ],
-        "version": 17,
+        "version": 18,
         "internalName": "MovieLinkBDProvider",
         "description": "MovieLinkBD - Largest Movie Download Site in Bangladesh",
         "url": "https://raw.githubusercontent.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/MovieLinkBDProvider.cs3",

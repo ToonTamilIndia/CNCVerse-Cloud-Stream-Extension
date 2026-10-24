@@ -40,7 +40,7 @@ import java.util.concurrent.TimeUnit
 class MovieLinkBDProvider : MainAPI() {
     companion object {
         var appContext: Context? = null
-        private const val FALLBACK_URL = "https://movielinkbd.one"
+        private const val FALLBACK_URL = "https://movielinkbd.li"
         private const val BROWSER_DEBOUNCE_MS = 10000L
         @Volatile private var lastBrowserOpenMs = 0L
     }
@@ -163,9 +163,9 @@ class MovieLinkBDProvider : MainAPI() {
     // ── Resolve the live mirror URL ─────────────────────────────────────────
     private val baseCandidates = listOf(
         FALLBACK_URL,
-        "https://www.movielinkbd.one",
-        "https://movielinkbd.li",
-        "https://open.movielinkbd.li"
+        "https://open.movielinkbd.li",
+        "https://movielinkbd.com",
+        "https://www.movielinkbd.one"
     )
 
     private fun isValidMlbdHome(html: String): Boolean {

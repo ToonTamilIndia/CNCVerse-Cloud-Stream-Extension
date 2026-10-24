@@ -20,14 +20,32 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.INFER_TYPE
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.newExtractorLink
+import org.jsoup.Jsoup
+import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.view.ViewGroup
+import android.webkit.CookieManager
+import android.webkit.WebChromeClient
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.TextView
 import com.lagradost.cloudstream3.ui.settings.Globals.TV
 import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import org.json.JSONTokener
+import kotlin.coroutines.resume
 
 class MlsbdProvider : MainAPI() {
     companion object {
@@ -59,13 +77,189 @@ class MlsbdProvider : MainAPI() {
         "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
     )
 
+    // Upstream uses a mobile UA for the Cloudflare-aware fetch path.
+    private val defaultUserAgent =
+        "Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+
+    private fun buildHeaders(cfClearance: String?): Map<String, String> {
+        val map = mutableMapOf(
+            "User-Agent" to defaultUserAgent,
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language" to "en-US,en;q=0.9,bn;q=0.8"
+        )
+        if (!cfClearance.isNullOrEmpty()) map["Cookie"] = "cf_clearance=$cfClearance"
+        return map
+    }
+
+    private fun isCloudflare(html: String, statusCode: Int): Boolean {
+        if (statusCode == 403 || statusCode == 503) return true
+        if (html.length >= 6000) return false
+        val lower = html.lowercase()
+        return lower.contains("cf-browser-verification") ||
+                lower.contains("checking if the site connection is secure") ||
+                lower.contains("just a moment") ||
+                lower.contains("attention required! | cloudflare") ||
+                lower.contains("enable javascript and cookies to continue")
+    }
+
+    /**
+     * Ported from upstream `fetchHtml`: performs a normal request with a stored
+     * `cf_clearance` cookie and falls back to the captcha WebView when Cloudflare
+     * returns a challenge instead of the page.
+     */
+    private suspend fun fetchHtml(url: String, cacheTime: Int = 0, timeout: Long = 60): Document? {
+        try {
+            val response = app.get(
+                url,
+                headers = buildHeaders(MlsbdStorage.getCfCookie().first),
+                cacheTime = cacheTime,
+                allowRedirects = true,
+                timeout = timeout
+            )
+            if (!isCloudflare(response.text, response.code)) {
+                return Jsoup.parse(response.text, url)
+            }
+        } catch (_: Exception) {
+        }
+
+        // Challenge (or transient network error): clear any stale cookie and solve it.
+        MlsbdStorage.clearCfCookie()
+        fetchViaWebView(url)?.let { return it }
+
+        return try {
+            val response = app.get(
+                url,
+                headers = buildHeaders(MlsbdStorage.getCfCookie().first),
+                timeout = timeout,
+                allowRedirects = true
+            )
+            if (!isCloudflare(response.text, response.code)) Jsoup.parse(response.text, url) else null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Ported from upstream `fetchViaWebView`: shows a WebView so the user can solve
+     * the Cloudflare captcha (touch or D-pad), persists `cf_clearance`, then returns
+     * the fully rendered page.
+     */
+    private suspend fun fetchViaWebView(url: String): Document? {
+        val ctx = appContext ?: return null
+        return withContext(Dispatchers.Main) {
+            suspendCancellableCoroutine { cont ->
+                try {
+                    val cookieManager = CookieManager.getInstance()
+                    cookieManager.setAcceptCookie(true)
+                    val webView = WebView(ctx)
+                    cookieManager.setAcceptThirdPartyCookies(webView, true)
+                    webView.settings.apply {
+                        javaScriptEnabled = true
+                        domStorageEnabled = true
+                        mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                        userAgentString = defaultUserAgent
+                        mediaPlaybackRequiresUserGesture = false
+                    }
+                    webView.webChromeClient = WebChromeClient()
+
+                    val density = ctx.resources.displayMetrics.density
+                    val pad = (10 * density).toInt()
+
+                    val wrapper = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+                    val hint = TextView(ctx).apply {
+                        text = "🔐 Solve the Cloudflare captcha to continue."
+                        setTextColor(Color.WHITE)
+                        setBackgroundColor(Color.parseColor("#1A1A2E"))
+                        textSize = 13f
+                        setPadding(pad, pad, pad, pad)
+                    }
+                    val container = FrameLayout(ctx).apply {
+                        layoutParams = LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+                        )
+                        isFocusable = true
+                        isFocusableInTouchMode = true
+                    }
+                    webView.layoutParams = FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                    container.addView(webView)
+                    wrapper.addView(hint)
+                    wrapper.addView(container)
+
+                    var resolved = false
+                    val dialog = AlertDialog.Builder(ctx).setView(wrapper).create()
+
+                    fun finish(doc: Document?) {
+                        if (resolved) return
+                        resolved = true
+                        try {
+                            dialog.dismiss()
+                        } catch (_: Exception) {
+                        }
+                        try {
+                            webView.destroy()
+                        } catch (_: Exception) {
+                        }
+                        if (cont.isActive) cont.resume(doc)
+                    }
+
+                    fun checkAndFinish() {
+                        if (resolved) return
+                        val cookies = cookieManager.getCookie(url).orEmpty()
+                        Regex("cf_clearance=([^;]+)").find(cookies)
+                            ?.groupValues?.getOrNull(1)
+                            ?.let { MlsbdStorage.saveCfCookie(it) }
+
+                        webView.evaluateJavascript("document.documentElement.outerHTML") { raw ->
+                            val html = try {
+                                JSONTokener(raw ?: "").nextValue() as? String
+                            } catch (_: Exception) {
+                                raw
+                            }
+                            when {
+                                html.isNullOrBlank() -> finish(null)
+                                isCloudflare(html, 200) ->
+                                    Handler(Looper.getMainLooper())
+                                        .postDelayed({ checkAndFinish() }, 2000L)
+                                else -> finish(Jsoup.parse(html, url))
+                            }
+                        }
+                    }
+
+                    webView.webViewClient = object : WebViewClient() {
+                        override fun onPageFinished(view: WebView, pageUrl: String) {
+                            super.onPageFinished(view, pageUrl)
+                            view.postDelayed({ checkAndFinish() }, 1500L)
+                        }
+                    }
+
+                    dialog.setOnDismissListener { if (!resolved) finish(null) }
+                    dialog.show()
+                    webView.loadUrl(url)
+                    container.requestFocus()
+
+                    // Never block link resolution forever.
+                    Handler(Looper.getMainLooper()).postDelayed({ finish(null) }, 120_000L)
+                } catch (_: Exception) {
+                    if (cont.isActive) cont.resume(null)
+                }
+            }
+        }
+    }
+
     override suspend fun getMainPage(
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
         val url = if (request.data == "") mainUrl
         else "$mainUrl${request.data}$page/"
-        val doc = app.get(url, cacheTime = 1440, allowRedirects = true, timeout = 60, headers = headers).document
+        val doc = fetchHtml(url, cacheTime = 1440)
+            ?: return newHomePageResponse(
+                HomePageList(request.name, emptyList(), isHorizontalImages = true),
+                false
+            )
         val homeResponse = doc.select("div.single-post")
         val home = homeResponse.mapNotNull { post -> toResult(post) }
         return newHomePageResponse(HomePageList(request.name, home, isHorizontalImages = true), true)
@@ -82,13 +276,14 @@ class MlsbdProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val doc = app.get("$mainUrl/?s=$query", headers = headers, timeout = 60).document
+        val doc = fetchHtml("$mainUrl/?s=$query") ?: return emptyList()
         val searchResponse = doc.select("div.single-post")
         return searchResponse.mapNotNull { post -> toResult(post) }
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val doc = app.get(url, headers = headers, timeout = 60).document
+        val doc = fetchHtml(url)
+            ?: return newMovieLoadResponse("", url, TvType.Movie, "") { }
         val title = doc.select(".name").text()
         val year = "(?<=\\()\\d{4}(?=\\))".toRegex().find(title)?.value?.toIntOrNull()
         val image = doc.select("img.aligncenter").attr("src")
@@ -210,7 +405,7 @@ class MlsbdProvider : MainAPI() {
             if (link.isEmpty()) return@forEach
             if (link.isSocialOrAuthLink()) return@forEach
             if (link.contains("savelinks")) {
-                val doc = app.get(link).document
+                val doc = fetchHtml(link) ?: return@forEach
                 // Links are inside <ul><li><a href="..."> on savelinks.me
                 doc.select("ul li a[href^=http]").forEach {
                     val url = it.attr("href").trim()

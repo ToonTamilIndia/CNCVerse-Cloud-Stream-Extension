@@ -48,6 +48,7 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        continue-on-error: true
 
       - name: Build Plugins
         run: |

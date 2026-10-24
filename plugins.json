@@ -354,10 +354,10 @@
     },
     {
         "iconUrl": "https://mlsbd.co/wp-content/uploads/2020/08/MLSBD-Logo.png",
-        "fileHash": "sha256-faa5e5c2f96b10e953e95918da3b1a7d2cb47da69f106a41ef06a2d57bf69c47",
+        "fileHash": "sha256-b668270413227c854dd9067aa445b9768ecc733d2c4a31e684e5ce2c4c1b8676",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension",
-        "fileSize": 62840,
+        "fileSize": 71198,
         "status": 1,
         "language": "bn",
         "authors": [
@@ -369,7 +369,7 @@
             "AnimeMovie",
             "AsianDrama"
         ],
-        "version": 32,
+        "version": 33,
         "internalName": "MLSBDProvider",
         "description": "The largest movie link store in Bangladesh",
         "url": "https://raw.githubusercontent.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/MLSBDProvider.cs3",

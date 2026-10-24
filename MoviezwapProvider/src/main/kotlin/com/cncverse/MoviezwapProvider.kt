@@ -18,7 +18,7 @@ import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
 
 class MoviezwapProvider : MainAPI() {
     // Using CORS proxy to bypass geo-blocks
-    override var mainUrl = "https://www.moviezwap.land"
+    override var mainUrl = "https://www.moviezwap.poker"
     override var name = "Moviezwap"
     override val hasMainPage = true
     override var lang = "te" // Telugu
@@ -241,11 +241,20 @@ class MoviezwapProvider : MainAPI() {
                 else -> Qualities.Unknown.value
             }
             
-            // Fetch the download.php page to get the actual download link
+            // Fetch the download.php page to get the actual media link. The page
+            // no longer has a "Fast Download Server" anchor; the direct file is
+            // the first absolute link pointing at a media file.
             val actualDownloadUrl = try {
                 val downloadPage = app.get(downloadPageUrl).document
-                // Look for "Fast Download Server" link
                 downloadPage.selectFirst("a:contains(Fast Download Server)")?.attr("href")
+                    ?: downloadPage.select("a[href]")
+                        .map { it.attr("href") }
+                        .firstOrNull { href ->
+                            href.startsWith("http") &&
+                                !href.contains("telegram", ignoreCase = true) &&
+                                Regex("""\.(mp4|mkv|avi|3gp|m4v|webm)(\?|$)""", RegexOption.IGNORE_CASE)
+                                    .containsMatchIn(href)
+                        }
                     ?: downloadPageUrl
             } catch (e: Exception) {
                 Log.e("MoviezwapProvider", "Error fetching download page: ${e.message}")

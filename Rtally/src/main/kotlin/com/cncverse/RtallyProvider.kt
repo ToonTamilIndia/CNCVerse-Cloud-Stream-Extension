@@ -27,7 +27,7 @@ class RtallyProvider : MainAPI() {
         var context: android.content.Context? = null
     }
 
-    override var mainUrl = "https://www.rtally.link"
+    override var mainUrl = "https://www.rtally.shop"
     override var name = "Rtally"
     override var lang = "ta"
     override val hasMainPage = true

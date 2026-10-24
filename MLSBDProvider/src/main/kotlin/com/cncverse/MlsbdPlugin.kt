@@ -10,6 +10,16 @@ class MlsbdPlugin : Plugin() {
         MlsbdProvider.appContext = context
         registerMainAPI(MlsbdProvider())
         registerExtractorAPI(GDFlix())
+        registerExtractorAPI(GDFlixVip())
         registerExtractorAPI(HubCloud())
+        registerExtractorAPI(GDxFiles())
+        registerExtractorAPI(MultiCloudLinks())
+        registerExtractorAPI(MultiCloudLinksNew())
+        registerExtractorAPI(MultiCloudLinksNew1())
+        registerExtractorAPI(MultiCloudLinksNew2())
+        registerExtractorAPI(Filepress())
+        registerExtractorAPI(FilepressNew1())
+        registerExtractorAPI(FilepressNew3())
+        registerExtractorAPI(FilepressFilebee())
     }
 }

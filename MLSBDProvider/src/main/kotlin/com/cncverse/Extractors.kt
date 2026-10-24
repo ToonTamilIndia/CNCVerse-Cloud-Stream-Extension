@@ -13,6 +13,8 @@ import com.lagradost.cloudstream3.utils.getQualityFromName
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import okhttp3.FormBody
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.net.URI
 import java.net.URLDecoder
@@ -368,7 +370,7 @@ open class HubCloud : ExtractorApi() {
     }
 }
 
-class GDFlix : ExtractorApi() {
+open class GDFlix : ExtractorApi() {
     override val name = "GDFlix"
     override val mainUrl = "https://*.gdflix.*"
     override val requiresReferer = false
@@ -598,6 +600,197 @@ class Gofile : ExtractorApi() {
         return Regex("(\\d{3,4})[pP]").find(fileName ?: "")?.groupValues?.getOrNull(1)?.toIntOrNull()
             ?: Qualities.Unknown.value
     }
+}
+
+class GDFlixVip : GDFlix() {
+    override val mainUrl = "https://gdflix.vip"
+}
+
+class GDxFiles : ExtractorApi() {
+    override val name = "GDxFiles"
+    override val mainUrl = "https://gdxfiles.com"
+    override val requiresReferer = false
+
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val doc = runCatching { app.get(url).document }.getOrNull() ?: return
+        val fileName = doc.title().substringBefore(" | GDxFiles").trim()
+
+        val watchHref = doc.selectFirst("a[href*='/watch?hash=']")?.attr("href")
+        val watchUrl = when {
+            watchHref.isNullOrBlank() -> url
+            watchHref.startsWith("http") -> watchHref
+            else -> "https://gdxfiles.com" + watchHref
+        }
+
+        val html = runCatching { app.get(watchUrl).text }.getOrNull() ?: return
+        val src = Regex("const\\s+SRC\\s*=\\s*\"([^\"]+)\"")
+            .find(html)?.groupValues?.getOrNull(1)
+            ?.replace("\\/", "/")
+            ?.replace("\\u0026", "&")
+            ?: return
+
+        callback(
+            newExtractorLink(name, "$name [${fileName.ifBlank { "Video" }}]", src, INFER_TYPE) {
+                this.referer = "https://gdxfiles.com/"
+                this.quality = getIndexQuality(fileName)
+            }
+        )
+    }
+}
+
+open class MultiCloudLinksBase : ExtractorApi() {
+    override val name = "MultiCloudLinks"
+    override val mainUrl = "https://new3.multicloudlinks.com"
+    override val requiresReferer = false
+
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val doc = runCatching { app.get(url).document }.getOrNull() ?: return
+        val fileName = doc.selectFirst(".file-name, .file-title, h1")?.text()?.trim()
+            ?: doc.title().substringBefore(" - ").trim()
+
+        doc.select("a.premium-btn[href]").forEach { anchor ->
+            val href = anchor.attr("href").trim()
+            val label = anchor.selectFirst(".btn-text-wrapper")?.text()?.trim()
+                ?: anchor.text().trim()
+            if (href.isBlank()) return@forEach
+
+            when {
+                href.contains("player.php") -> {
+                    val html = runCatching { app.get(href).text }.getOrNull() ?: return@forEach
+                    val src = Regex("const\\s+streamSrc\\s*=\\s*\"([^\"]+)\"")
+                        .find(html)?.groupValues?.getOrNull(1)
+                        ?.replace("\\/", "/")
+                        ?.replace("\\u0026", "&")
+                    if (!src.isNullOrBlank()) {
+                        callback(
+                            newExtractorLink(name, "$name [$label]", src, INFER_TYPE) {
+                                this.quality = getIndexQuality(fileName)
+                            }
+                        )
+                    }
+                }
+
+                href.contains("multidownload.lol") || href.contains("cloudflarestorage.com") -> {
+                    callback(
+                        newExtractorLink(name, "$name [$label]", href, INFER_TYPE) {
+                            this.quality = getIndexQuality(fileName)
+                        }
+                    )
+                }
+
+                // Same-site redirect pages (e.g. /dl/) would recurse back into this extractor.
+                href.contains("multicloudlinks.com") -> Unit
+
+                else -> loadExtractor(href, url, subtitleCallback, callback)
+            }
+        }
+    }
+}
+
+class MultiCloudLinks : MultiCloudLinksBase()
+
+class MultiCloudLinksNew : MultiCloudLinksBase() {
+    override val mainUrl = "https://new.multicloudlinks.com"
+}
+
+class MultiCloudLinksNew1 : MultiCloudLinksBase() {
+    override val mainUrl = "https://new1.multicloudlinks.com"
+}
+
+class MultiCloudLinksNew2 : MultiCloudLinksBase() {
+    override val mainUrl = "https://new2.multicloudlinks.com"
+}
+
+open class FilepressBase : ExtractorApi() {
+    override val name = "FilePress"
+    override val mainUrl = "https://new2.filepress.lat"
+    override val requiresReferer = false
+
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val origin = runCatching {
+            URI(url).let { "${it.scheme}://${it.host}" }
+        }.getOrNull() ?: return
+
+        val id = url.substringAfter("/file/", "").substringBefore("/").substringBefore("?").trim()
+        if (id.isEmpty()) return
+
+        val api = "$origin/api"
+        val headers = mapOf("Accept" to "application/json", "Referer" to "$origin/")
+
+        val fileName = runCatching {
+            JSONObject(app.get("$api/file/get/$id", headers = headers).text)
+                .optJSONObject("data")?.optString("name").orEmpty()
+        }.getOrDefault("")
+
+        val step1 = runCatching {
+            JSONObject(
+                app.post(
+                    url = "$api/file/downlaod/",
+                    requestBody = JSONObject(mapOf("id" to id, "method" to "cloudR2Downlaod"))
+                        .toString()
+                        .toRequestBody("application/json; charset=utf-8".toMediaType()),
+                    headers = headers
+                ).text
+            )
+        }.getOrNull() ?: return
+
+        val downloadId = step1.optJSONObject("data")?.optString("downloadId").orEmpty()
+        if (downloadId.isEmpty()) return
+
+        val finalUrl = runCatching {
+            JSONObject(
+                app.post(
+                    url = "$api/file/downlaod2/",
+                    requestBody = JSONObject(
+                        mapOf(
+                            "captchaValue" to "",
+                            "id" to downloadId,
+                            "method" to "cloudR2Downlaod"
+                        )
+                    ).toString().toRequestBody("application/json; charset=utf-8".toMediaType()),
+                    headers = headers
+                ).text
+            ).optString("data").orEmpty()
+        }.getOrDefault("")
+
+        if (finalUrl.startsWith("http")) {
+            callback(
+                newExtractorLink(name, "$name [${fileName.ifBlank { "Video" }}]", finalUrl, INFER_TYPE) {
+                    this.referer = "$origin/"
+                    this.quality = getIndexQuality(fileName)
+                }
+            )
+        }
+    }
+}
+
+class Filepress : FilepressBase()
+
+class FilepressNew1 : FilepressBase() {
+    override val mainUrl = "https://new1.filepress.lat"
+}
+
+class FilepressNew3 : FilepressBase() {
+    override val mainUrl = "https://new3.filepress.lat"
+}
+
+class FilepressFilebee : FilepressBase() {
+    override val mainUrl = "https://filebee.xyz"
 }
 
 fun getIndexQuality(str: String?): Int {

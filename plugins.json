@@ -354,10 +354,10 @@
     },
     {
         "iconUrl": "https://mlsbd.co/wp-content/uploads/2020/08/MLSBD-Logo.png",
-        "fileHash": "sha256-dfdadcfe3a5bae745a846651ab804dcf9373f817909741b13b6de2d4a4ba312b",
+        "fileHash": "sha256-613e76c893e40b0928432685d0d40928471d705c2e0511a7b587bcfa718b741b",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension",
-        "fileSize": 48830,
+        "fileSize": 61178,
         "status": 1,
         "language": "bn",
         "authors": [
@@ -369,7 +369,7 @@
             "AnimeMovie",
             "AsianDrama"
         ],
-        "version": 30,
+        "version": 31,
         "internalName": "MLSBDProvider",
         "description": "The largest movie link store in Bangladesh",
         "url": "https://raw.githubusercontent.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/MLSBDProvider.cs3",
@@ -442,10 +442,10 @@
     },
     {
         "iconUrl": "https://raw.githubusercontent.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/master/MoviezwapProvider/icon.png",
-        "fileHash": "sha256-40842ed7b0a5cf2f0a71edf0cf40019128e25dace16f8819781b61bf6c03e776",
+        "fileHash": "sha256-a7edc0962ccade969dffd611bcfcd21229573beefa49343d115f3c16eacd82b9",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension",
-        "fileSize": 17403,
+        "fileSize": 18043,
         "status": 1,
         "language": "te",
         "authors": [
@@ -454,7 +454,7 @@
         "tvTypes": [
             "Movie"
         ],
-        "version": 30,
+        "version": 31,
         "internalName": "MoviezwapProvider",
         "description": "Telugu Movies Provider - Moviezwap",
         "url": "https://raw.githubusercontent.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/MoviezwapProvider.cs3",
@@ -543,10 +543,10 @@
     },
     {
         "iconUrl": "https://github.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/Rtally/icon.png",
-        "fileHash": "sha256-a227812b791abab72d812ae88c309d5d7d5f53330c8bfb28ec90dc930001df8c",
+        "fileHash": "sha256-9db715e18061cec98d2247ca0ccb109f0921dc031400a035bc2c52a9b9ef0d90",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension",
-        "fileSize": 20171,
+        "fileSize": 64757,
         "status": 1,
         "language": "en",
         "authors": [
@@ -559,7 +559,7 @@
             "AnimeMovie",
             "AsianDrama"
         ],
-        "version": 47,
+        "version": 49,
         "internalName": "Rtally",
         "description": "Movie and TV Series provider",
         "url": "https://raw.githubusercontent.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/Rtally.cs3",

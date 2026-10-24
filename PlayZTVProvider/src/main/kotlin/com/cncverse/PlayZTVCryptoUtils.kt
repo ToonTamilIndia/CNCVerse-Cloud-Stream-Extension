@@ -13,29 +13,23 @@ object PlayZTVCryptoUtils {
     /**
      * OLD FORMAT
      */
-    private const val PLAYZ_AES_KEY =
-        "bTVLbDVuazR4SzFrTjdwTg=="
+    private val PLAYZ_AES_KEY = BuildConfig.PLAYZ_AES_KEY
 
-    private const val PLAYZ_AES_IV =
-        "azVLNG5NOG1LbE5MN2wxNQ=="
+    private val PLAYZ_AES_IV = BuildConfig.PLAYZ_AES_IV
 
     /**
      * PRIMARY FORMAT
      */
-    private const val PLAYZ_PRIMARY_AES_KEY =
-        "Yi8xam1sNW5rNHg1azdwTg=="
+    private val PLAYZ_PRIMARY_AES_KEY = BuildConfig.PLAYZ_PRIMARY_AES_KEY
 
-    private const val PLAYZ_PRIMARY_AES_IV =
-        "MTRuTWs4bU41S2w1S0w3bA=="
+    private val PLAYZ_PRIMARY_AES_IV = BuildConfig.PLAYZ_PRIMARY_AES_IV
 
     /**
      * Substitution maps from plugin.js
      */
-    private const val SUB_FROM =
-        "aAbBcCdDeEfFgGhHiIjJkKlLmMnNoOpPqQrRsStTuUvVwWxXyYzZ"
+    private val SUB_FROM = BuildConfig.PLAYZ_SUB_FROM
 
-    private const val SUB_TO =
-        "fFgGjJkKaApPbBmMoOzZeEnNcCdDrRqQtTvVuUxXhHiIwWyYlLsS"
+    private val SUB_TO = BuildConfig.PLAYZ_SUB_TO
 
     private val SUB_REVERSE = HashMap<Char, Char>()
 

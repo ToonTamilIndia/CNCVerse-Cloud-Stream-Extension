@@ -1,4 +1,4 @@
-version = 14
+version = 15
 
 
 dependencies {
@@ -9,7 +9,7 @@ dependencies {
 
 cloudstream {
     language = "en"
-    description = "Subscription Management"
+    description = "About this ad-free build (offline, no licence checks)"
     authors = listOf("ToonTamilIndia")
     status = 1
     tvTypes = listOf("Settings")

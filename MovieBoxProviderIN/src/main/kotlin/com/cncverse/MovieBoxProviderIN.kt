@@ -71,8 +71,9 @@ class MovieBoxProviderIN : MainAPI() {
     override var lang = "ta"
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
 
-    private val secretKeyDefault = base64Decode("NzZpUmwwN3MweFNOOWpxbUVXQXQ3OUVCSlp1bElRSXNWNjRGWnIyTw==")
-    private val secretKeyAlt = base64Decode("WHFuMm5uTzQxL0w5Mm8xaXVYaFNMSFRiWHZZNFo1Wlo2Mm04bVNMQQ==")
+    // Keys are injected at build time from this module's build.gradle.kts.
+    private val secretKeyDefault = base64Decode(BuildConfig.MOVIEBOXIN_SECRET_KEY_DEFAULT)
+    private val secretKeyAlt = base64Decode(BuildConfig.MOVIEBOXIN_SECRET_KEY_ALT)
 
         private fun md5(input: ByteArray): String {
         return MessageDigest.getInstance("MD5").digest(input)

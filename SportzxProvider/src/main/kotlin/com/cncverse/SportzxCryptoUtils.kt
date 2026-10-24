@@ -8,16 +8,17 @@ import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 object SportzxCryptoUtils {
-    private const val APP_PASSWORD = "oAR80SGuX3EEjUGFRwLFKBTiris="
+    // Keys are injected at build time from this module's build.gradle.kts.
+    private val APP_PASSWORD = BuildConfig.SPORTZX_APP_PASSWORD
 
-    private val CHARSET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+!@#$%&=".toByteArray(Charsets.UTF_8)
+    private val CHARSET = BuildConfig.SPORTZX_CHARSET.toByteArray(Charsets.UTF_8)
 
     private val AES_KEY: ByteArray by lazy { generateAesKeyIv(APP_PASSWORD).first }
     private val AES_IV: ByteArray by lazy { generateAesKeyIv(APP_PASSWORD).second }
 
     private val MAGIC = byteArrayOf(0xDE.toByte(), 0xAD.toByte(), 0xBE.toByte(), 0xEF.toByte())
-    private val PRK = decodeHex("d1a7ebbaed93b2f68ac092ade2b0075d917634447a3519b41e817ad631020053")
-    private val CTX_HASH = decodeHex("1676ec7db4771b0d826d70369b579684b182d2c0133be041bdd55f5d6d79a98b")
+    private val PRK = decodeHex(BuildConfig.SPORTZX_PRK)
+    private val CTX_HASH = decodeHex(BuildConfig.SPORTZX_CTX_HASH)
 
     private fun u32(x: Long): Long = x and 4294967295L
 

@@ -1,6 +1,14 @@
 // use an integer for version numbers
-version = 46
+version = 47
 
+android {
+    defaultConfig {
+        // Base64 HMAC-MD5 signing secrets used by MovieBoxProvider.
+        // Declared here instead of being hardcoded in Kotlin. No env vars.
+        buildConfigField("String", "MOVIEBOX_SECRET_KEY_DEFAULT", "\"NzZpUmwwN3MweFNOOWpxbUVXQXQ3OUVCSlp1bElRSXNWNjRGWnIyTw==\"")
+        buildConfigField("String", "MOVIEBOX_SECRET_KEY_ALT", "\"WHFuMm5uTzQxL0w5Mm8xaXVYaFNMSFRiWHZZNFo1Wlo2Mm04bVNMQQ==\"")
+    }
+}
 
 cloudstream {
     language = "hi"

@@ -1,9 +1,15 @@
 // use an integer for version numbers
-version = 30
+version = 31
 
 android {
     buildFeatures {
         viewBinding = true
+    }
+    defaultConfig {
+        // API key + HMAC secret used by PikashowProvider request signing.
+        // Declared here instead of being hardcoded in Kotlin. No env vars.
+        buildConfigField("String", "PIKASHOW_API_KEY", "\"picashow-api-secret-key\"")
+        buildConfigField("String", "PIKASHOW_HMAC_SECRET", "\"picashow-api-secret-2025\"")
     }
 }
 dependencies {

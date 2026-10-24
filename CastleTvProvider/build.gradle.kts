@@ -1,6 +1,13 @@
 // use an integer for version numbers
-version = 38
+version = 39
 
+android {
+    defaultConfig {
+        // Key suffix appended to the API key before AES derivation in
+        // CastleTvProvider. Declared here instead of being hardcoded in Kotlin.
+        buildConfigField("String", "CASTLE_KEY_SUP_FIXX", "\"T!BgJB\"")
+    }
+}
 
 cloudstream {
     language = "ta"

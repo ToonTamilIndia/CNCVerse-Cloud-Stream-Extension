@@ -11,16 +11,17 @@ import javax.crypto.spec.SecretKeySpec
 
 object PlayFyCryptoUtils {
 
-    const val DEFAULT_LORA = "zH7hY9@lO=8uXk#f%mI/VvJd2G10Z5eU+L6Pi&aEbwA4scBCStQ3KyWqRjDgnoMRP"
-    const val DEFAULT_SIG = "Mc1pOdG+rjLRsO8tlGCxcBFqGIU"
+    // Keys are injected at build time from this module's build.gradle.kts.
+    val DEFAULT_LORA = BuildConfig.PLAYFY_DEFAULT_LORA
+    val DEFAULT_SIG = BuildConfig.PLAYFY_DEFAULT_SIG
 
-    private val AES_KEY = "hg47Dd84jfK83ncG"
-    private val AES_IV = "47hgD84sjG83nFkH"
-    private const val SHUFFLED_ALPHABET = "fFgGjJkKaApPbBmMoOzZeEnNcCdDrRqQtTvVuUxXhHiIwWyYlLsS"
-    private const val STANDARD_ALPHABET = "aAbBcCdDeEfFgGhHiIjJkKlLmMnNoOpPqQrRsStTuUvVwWxXyYzZ"
+    private val AES_KEY = BuildConfig.PLAYFY_AES_KEY
+    private val AES_IV = BuildConfig.PLAYFY_AES_IV
+    private val SHUFFLED_ALPHABET = BuildConfig.PLAYFY_SHUFFLED_ALPHABET
+    private val STANDARD_ALPHABET = BuildConfig.PLAYFY_STANDARD_ALPHABET
 
-    private val FALLBACK_KEY = "ouAzyvGQqd5yAi5G".toByteArray(Charsets.ISO_8859_1)
-    private val FALLBACK_IV = "QC4a1NX)XXEHq1bf".toByteArray(Charsets.ISO_8859_1)
+    private val FALLBACK_KEY = BuildConfig.PLAYFY_FALLBACK_KEY.toByteArray(Charsets.ISO_8859_1)
+    private val FALLBACK_IV = BuildConfig.PLAYFY_FALLBACK_IV.toByteArray(Charsets.ISO_8859_1)
     private const val FNV32_PRIME = 16777619L
     private const val MASK32 = 4294967295L
 

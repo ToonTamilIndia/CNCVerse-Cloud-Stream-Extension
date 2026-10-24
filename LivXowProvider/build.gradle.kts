@@ -1,10 +1,21 @@
 // use an integer for version numbers
-version = 14
+version = 15
 
 
 dependencies {
     implementation("androidx.core:core:1.16.0")
     implementation("com.google.android.material:material:1.12.0")
+}
+
+android {
+    defaultConfig {
+        // AES key/IV + substitution alphabets used by LivXowCryptoUtils to
+        // unwrap the provider's encrypted API payloads.
+        buildConfigField("String", "LIVXOW_AES_KEY", "\"M8mkKlNL75K4nl15\"")
+        buildConfigField("String", "LIVXOW_AES_IV", "\"kN7m5Kl1pN5nk4xK\"")
+        buildConfigField("String", "LIVXOW_SHUFFLED_ALPHABET", "\"fFgGjJkKaApPbBmMoOzZeEnNcCdDrRqQtTvVuUxXhHiIwWyYlLsS\"")
+        buildConfigField("String", "LIVXOW_STANDARD_ALPHABET", "\"aAbBcCdDeEfFgGhHiIjJkKlLmMnNoOpPqQrRsStTuUvVwWxXyYzZ\"")
+    }
 }
 
 cloudstream {

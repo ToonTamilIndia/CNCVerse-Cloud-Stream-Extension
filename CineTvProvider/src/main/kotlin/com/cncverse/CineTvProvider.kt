@@ -27,13 +27,14 @@ import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
 class CineTvProvider : MainAPI() {
     companion object {
         var context: Context? = null
-        
-        private val SECRET_KEY_ENCRYPTED = "MxASAkl/yHTGg+/Tw1R7u96nGqkWsOZ2"
-        private val DES_KEY = "dsawdf634eebGFHITR5UT9kS0"
-        private val DES_IV = "32456738"
-        private val AES_KEY = "0123456789123456"
-        private val AES_IV = "2015030120123456"
-        private val WS_SECRET = "00b5f05c40b4f1d91dbc9b3fd8a059ef"
+
+        // Keys are injected at build time from this module's build.gradle.kts.
+        private val SECRET_KEY_ENCRYPTED = BuildConfig.CINETV_SECRET_KEY_ENCRYPTED
+        private val DES_KEY = BuildConfig.CINETV_DES_KEY
+        private val DES_IV = BuildConfig.CINETV_DES_IV
+        private val AES_KEY = BuildConfig.CINETV_AES_KEY
+        private val AES_IV = BuildConfig.CINETV_AES_IV
+        private val WS_SECRET = BuildConfig.CINETV_WS_SECRET
     }
     
     override var mainUrl = "https://filmin.ajfysu.com"

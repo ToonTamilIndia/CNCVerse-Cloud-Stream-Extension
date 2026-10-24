@@ -20,10 +20,11 @@ import javax.crypto.spec.SecretKeySpec
  */
 object LivXowCryptoUtils {
 
-    private val AES_KEY = "M8mkKlNL75K4nl15"
-    private val AES_IV = "kN7m5Kl1pN5nk4xK"
-    private const val SHUFFLED_ALPHABET = "fFgGjJkKaApPbBmMoOzZeEnNcCdDrRqQtTvVuUxXhHiIwWyYlLsS"
-    private const val STANDARD_ALPHABET = "aAbBcCdDeEfFgGhHiIjJkKlLmMnNoOpPqQrRsStTuUvVwWxXyYzZ"
+    // Keys are injected at build time from this module's build.gradle.kts.
+    private val AES_KEY = BuildConfig.LIVXOW_AES_KEY
+    private val AES_IV = BuildConfig.LIVXOW_AES_IV
+    private val SHUFFLED_ALPHABET = BuildConfig.LIVXOW_SHUFFLED_ALPHABET
+    private val STANDARD_ALPHABET = BuildConfig.LIVXOW_STANDARD_ALPHABET
 
     private val decodeTable: CharArray by lazy {
         val table = CharArray(128) { it.toChar() }

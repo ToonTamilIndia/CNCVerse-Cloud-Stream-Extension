@@ -1,6 +1,18 @@
 // use an integer for version numbers
-version = 33
+version = 34
 
+android {
+    defaultConfig {
+        // AES/DES key material and websocket secret used by CineTvProvider.
+        // Declared here instead of being hardcoded in Kotlin. No env vars.
+        buildConfigField("String", "CINETV_SECRET_KEY_ENCRYPTED", "\"MxASAkl/yHTGg+/Tw1R7u96nGqkWsOZ2\"")
+        buildConfigField("String", "CINETV_DES_KEY", "\"dsawdf634eebGFHITR5UT9kS0\"")
+        buildConfigField("String", "CINETV_DES_IV", "\"32456738\"")
+        buildConfigField("String", "CINETV_AES_KEY", "\"0123456789123456\"")
+        buildConfigField("String", "CINETV_AES_IV", "\"2015030120123456\"")
+        buildConfigField("String", "CINETV_WS_SECRET", "\"00b5f05c40b4f1d91dbc9b3fd8a059ef\"")
+    }
+}
 
 cloudstream {
     language = "ta"

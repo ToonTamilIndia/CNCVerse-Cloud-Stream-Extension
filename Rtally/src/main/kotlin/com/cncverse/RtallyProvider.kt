@@ -27,7 +27,7 @@ class RtallyProvider : MainAPI() {
         var context: android.content.Context? = null
     }
 
-    override var mainUrl = "https://www.rtally.shop"
+    override var mainUrl = "https://www.rtally.link"
     override var name = "Rtally"
     override var lang = "ta"
     override val hasMainPage = true
@@ -48,10 +48,14 @@ class RtallyProvider : MainAPI() {
         "/categories/bollywood" to "Bollywood",
         "/categories/tv-shows" to "Tv Shows",
         "/categories/korean" to "Korean",
-        "/categories/anime" to "Anime"
+        "/genres/animation" to "Animation"
     )
     private val headers =
         mapOf("user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36")
+
+    private val fileMoonRegex = Regex("\"multiLinksDl\":\\s*\"([^\"]+)\"")
+    private val streamwishMultiUrlRegex = Regex("\"streamwishMultiUrl\":\\s*\"([^\"]+)\"")
+    private val vidhideplusRegex = Regex("\"multiLinksSl\":\\s*\"([^\"]+)\"")
 
     override suspend fun getMainPage(
         page: Int,
@@ -92,14 +96,38 @@ class RtallyProvider : MainAPI() {
         }
     }
 
+    private fun extractFileMoonUrls(text: String): String? {
+        return fileMoonRegex.find(text)?.groupValues?.getOrNull(1)
+    }
+
     private fun extractImageUrl(url: String?): String? {
         if (url.isNullOrEmpty()) return url
         if (!url.contains("url=")) return url
-        return try {
-            URLDecoder.decode(url.substringAfter("url=").substringBefore("&"), "UTF-8")
-        } catch (e: Exception) {
-            url
+        val param = url.substringAfter("url=").substringBefore("&")
+        val bytes = mutableListOf<Byte>()
+        var i = 0
+        while (i < param.length) {
+            val c = param[i]
+            if (c == '%' && i + 2 < param.length) {
+                try {
+                    bytes.add(Integer.parseInt(param.substring(i + 1, i + 3), 16).toByte())
+                    i += 3
+                    continue
+                } catch (e: Exception) {
+                }
+            }
+            bytes.add(if (c == '+') 32 else c.toByte())
+            i++
         }
+        return bytes.toByteArray().decodeToString()
+    }
+
+    private fun extractStreamwishUrls(text: String): String? {
+        return streamwishMultiUrlRegex.find(text)?.groupValues?.getOrNull(1)
+    }
+
+    private fun extractVidhideplus(text: String): String? {
+        return vidhideplusRegex.find(text)?.groupValues?.getOrNull(1)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {

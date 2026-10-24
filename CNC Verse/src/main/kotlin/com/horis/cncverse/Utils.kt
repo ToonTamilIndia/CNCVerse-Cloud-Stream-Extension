@@ -220,93 +220,53 @@ suspend fun netMirrorMobileLoadLinks(
     return emitted
 }
 
-private val bypassScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-private val inflightLock = Any()
-@Volatile private var inflightBypass: Deferred<String>? = null
-
-private fun isCookieValid(): Boolean {
-    val (savedCookie, savedTimestamp) = NetflixMirrorStorage.getCookie()
-    return !savedCookie.isNullOrEmpty() && (System.currentTimeMillis() - savedTimestamp < 43_200_000)
-}
-
-fun primeBypass(mainUrl: String) {
-    if (isCookieValid()) return
-    synchronized(inflightLock) {
-        if (isCookieValid()) return
-        if (inflightBypass?.isActive == true) return
-        inflightBypass = bypassScope.async {
-            doBypass(mainUrl, allowWebView = false)
-        }
-    }
-}
-
-suspend fun ensureBypass(mainUrl: String): String {
-    if (isCookieValid()) {
-        return NetflixMirrorStorage.getCookie().first ?: ""
-    }
-
-    val activeJob = synchronized(inflightLock) {
-        if (isCookieValid()) {
-            return NetflixMirrorStorage.getCookie().first ?: ""
-        }
-        inflightBypass?.takeIf { it.isActive } ?: run {
-            val d = bypassScope.async {
-                doBypass(mainUrl, allowWebView = true)
-            }
-            inflightBypass = d
-            d
-        }
-    }
-
-    return try {
-        activeJob.await()
-    } catch (_: Exception) {
-        NetflixMirrorStorage.getCookie().first ?: ""
-    }
-}
-
-suspend fun tvBypass(mainUrl: String): String {
-    val (savedCookie, savedTimestamp) = NetflixMirrorStorage.getCookie()
-    if (!savedCookie.isNullOrEmpty() && System.currentTimeMillis() - savedTimestamp < 54_000_000L) {
+suspend fun bypass(mainUrl: String): String {
+    val cookie = NetflixMirrorStorage.getCookie()
+    val savedCookie = cookie.first
+    val savedTimestamp = cookie.second
+    if (!savedCookie.isNullOrEmpty() && System.currentTimeMillis() - savedTimestamp < 54000000) {
         return savedCookie
     }
     return try {
-        val client = okhttp3.OkHttpClient.Builder()
-            .followRedirects(false)
-            .followSslRedirects(false)
-            .build()
+        val headers = mapOf(
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            "Accept-Encoding" to "gzip, deflate, br, zstd",
+            "Accept-Language" to "en-US,en;q=0.9",
+            "Cache-Control" to "max-age=0",
+            "Connection" to "keep-alive",
+            "Content-Type" to "application/x-www-form-urlencoded",
+            "Origin" to "https://net22.cc",
+            "Referer" to "https://net22.cc/verify2",
+            "sec-ch-ua" to "\"Google Chrome\";v=\"147\", \"Not.A/Brand\";v=\"8\", \"Chromium\";v=\"147\"",
+            "sec-ch-ua-mobile" to "?0",
+            "sec-ch-ua-platform" to "\"Windows\"",
+            "Sec-Fetch-Dest" to "document",
+            "Sec-Fetch-Mode" to "navigate",
+            "Sec-Fetch-Site" to "same-origin",
+            "Sec-Fetch-User" to "?1",
+            "Upgrade-Insecure-Requests" to "1",
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
+        )
         val formBody = okhttp3.FormBody.Builder()
             .add("g-recaptcha-response", UUID.randomUUID().toString())
             .build()
-        val request = okhttp3.Request.Builder()
+        val client = app.getBaseClient().newBuilder()
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .build()
+        val requestBuilder = okhttp3.Request.Builder()
             .url("https://net52.cc/verify.php")
             .post(formBody)
-            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36")
-            .header("Origin", "https://net22.cc")
-            .header("Referer", "https://net22.cc/verify2")
-            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
-            .header("Accept-Language", "en-US,en;q=0.9")
-            .header("Cache-Control", "max-age=0")
-            .header("Connection", "keep-alive")
-            .header("Content-Type", "application/x-www-form-urlencoded")
-            .header("sec-ch-ua", "\"Google Chrome\";v=\"147\", \"Not.A/Brand\";v=\"8\", \"Chromium\";v=\"147\"")
-            .header("sec-ch-ua-mobile", "?0")
-            .header("sec-ch-ua-platform", "\"Windows\"")
-            .header("Sec-Fetch-Dest", "document")
-            .header("Sec-Fetch-Mode", "navigate")
-            .header("Sec-Fetch-Site", "same-site")
-            .header("Sec-Fetch-User", "?1")
-            .header("Upgrade-Insecure-Requests", "1")
-            .build()
-
-        val response = withContext(Dispatchers.IO) {
-            client.newCall(request).execute()
+        for ((key, value) in headers) {
+            requestBuilder.addHeader(key, value)
         }
-        val cookies = response.headers("Set-Cookie")
+        val response = withContext(Dispatchers.IO) {
+            client.newCall(requestBuilder.build()).execute()
+        }
         var cookieValue = ""
-        for (cookie in cookies) {
-            if (cookie.startsWith("t_hash_t=")) {
-                cookieValue = cookie.substringAfter("t_hash_t=").substringBefore(";")
+        for (cookieHeader in response.headers("Set-Cookie")) {
+            if (cookieHeader.startsWith("t_hash_t=")) {
+                cookieValue = cookieHeader.substringAfter("t_hash_t=").substringBefore(";")
                 break
             }
         }
@@ -317,38 +277,6 @@ suspend fun tvBypass(mainUrl: String): String {
     } catch (e: Exception) {
         ""
     }
-}
-
-suspend fun bypass(mainUrl: String): String {
-    return ensureBypass(mainUrl)
-}
-
-private suspend fun doBypass(mainUrl: String, allowWebView: Boolean): String {
-    if (isCookieValid()) {
-        return NetflixMirrorStorage.getCookie().first ?: ""
-    }
-
-    val tvCookie = tvBypass(mainUrl)
-    if (tvCookie.isNotEmpty()) {
-        return tvCookie
-    }
-
-    val newCookie = netMirrorMobileBypass(mainUrl)
-    if (newCookie.isNotEmpty()) {
-        NetflixMirrorStorage.saveCookie(newCookie)
-        return newCookie
-    }
-
-    if (!allowWebView) {
-        return ""
-    }
-
-    val wvCookie = solveBypassInWebView()
-    if (wvCookie.isNotEmpty()) {
-        NetflixMirrorStorage.saveCookie(wvCookie)
-        return wvCookie
-    }
-    return ""
 }
 
 private suspend fun netMirrorMobileBypass(mainUrl: String): String {
@@ -469,6 +397,11 @@ private var resolvedApiUrl: String = ""
 
 suspend fun resolveApiUrl(): String {
     if (resolvedApiUrl.isNotBlank()) return resolvedApiUrl
+    val (savedApiBase, savedApiBaseTimestamp) = NetflixMirrorStorage.getApiBase()
+    if (!savedApiBase.isNullOrEmpty() && System.currentTimeMillis() - savedApiBaseTimestamp < 86400000) {
+        resolvedApiUrl = savedApiBase.trimEnd('/')
+        return resolvedApiUrl
+    }
     for (encoded in newTvDomains) {
         val base = decodeBase64(encoded).trimEnd('/')
         try {
@@ -477,6 +410,7 @@ suspend fun resolveApiUrl(): String {
             val tokenHash = response.token_hash
             if (!tokenHash.isNullOrBlank()) {
                 resolvedApiUrl = decodeBase64(tokenHash).trimEnd('/')
+                NetflixMirrorStorage.saveApiBase(resolvedApiUrl)
                 return resolvedApiUrl
             }
         } catch (_: Exception) {
@@ -542,22 +476,24 @@ suspend fun fetchNetmirrorTvHtml(): String {
 }
 
 suspend fun getNewTvUserToken(apiBase: String, ott: String, forceRefresh: Boolean = false): String {
-    val (savedToken, savedTimestamp) = NetflixMirrorStorage.getUserToken(ott)
+    val (savedToken, _) = NetflixMirrorStorage.getUserToken(ott)
     if (!forceRefresh && !savedToken.isNullOrEmpty()) return savedToken
 
-    var currentOtp = NetflixMirrorStorage.getOtp() ?: "109400"
-    val otpHeaders = mutableMapOf(
+    var currentOtpRef = object {
+        var value: String = NetflixMirrorStorage.getOtp() ?: "109400"
+    }
+    val otpHeaders = mapOf(
         "accept" to "application/json, text/plain, */*",
         "cache-control" to "no-cache, no-store, must-revalidate",
         "Connection" to "Keep-Alive",
         "expires" to "0",
-        "otp" to currentOtp,
+        "otp" to currentOtpRef.value,
         "pragma" to "no-cache",
         "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.Gatu v1.0"
     )
 
-    var otpResponse = try {
-        app.get("$apiBase/newtv/otp.php", otpHeaders).parsedSafe<NewTvOtpResponse>()
+    var otpResponse: NewTvOtpResponse? = try {
+        app.get("$apiBase/newtv/otp.php", headers = otpHeaders).parsedSafe<NewTvOtpResponse>()
     } catch (e: Exception) {
         null
     }
@@ -571,11 +507,13 @@ suspend fun getNewTvUserToken(apiBase: String, ott: String, forceRefresh: Boolea
             if (otpMatch != null) {
                 val newOtp = Regex("""\s*,\s*""").replace(otpMatch.groupValues[1], "").replace(" ", "")
                 if (newOtp.isNotEmpty()) {
-                    currentOtp = newOtp
-                    NetflixMirrorStorage.saveOtp(currentOtp)
-                    otpHeaders["otp"] = currentOtp
+                    currentOtpRef.value = newOtp
+                    NetflixMirrorStorage.saveOtp(currentOtpRef.value)
+                    val updatedHeaders = otpHeaders.toMutableMap().apply {
+                        this["otp"] = currentOtpRef.value
+                    }
                     otpResponse = try {
-                        app.get("$apiBase/newtv/otp.php", otpHeaders).parsedSafe<NewTvOtpResponse>()
+                        app.get("$apiBase/newtv/otp.php", headers = updatedHeaders).parsedSafe<NewTvOtpResponse>()
                     } catch (e: Exception) {
                         null
                     }

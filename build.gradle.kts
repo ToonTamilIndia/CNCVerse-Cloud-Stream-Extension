@@ -83,6 +83,14 @@ subprojects {
         }
     }
 
+    // AGP 8 removed the implicit BuildConfig generation. The plugin modules that
+    // need decryption keys read them from `BuildConfig`; those keys are declared
+    // with `buildConfigField(...)` in the module's own `build.gradle.kts` and are
+    // never taken from environment variables.
+    extensions.configure<com.android.build.api.dsl.LibraryExtension> {
+        buildFeatures.buildConfig = true
+    }
+
     dependencies {
         val implementation by configurations
         val cloudstream by configurations

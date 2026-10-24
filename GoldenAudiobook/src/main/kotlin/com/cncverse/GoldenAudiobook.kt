@@ -27,7 +27,7 @@ class GoldenAudiobook : MainAPI() { // all providers must be an instance of Main
         var context: android.content.Context? = null
     }
     
-    override var mainUrl = "https://goldenaudiobook.net"
+    override var mainUrl = "https://goldenaudiobooks.com"
     override var name = "Golden Audiobook"
 
     override val hasMainPage = true

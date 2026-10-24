@@ -1,10 +1,10 @@
 [
     {
         "iconUrl": "https://anikototv.to/AnikotoTheme/assets/images/favicon.png",
-        "fileHash": "sha256-8f72acda2da7d6bd001da02bddb9e09ce025d96c01cfcaa014492bf678e3a29f",
+        "fileHash": "sha256-e2358e4ef9d76711c3535eeb06a6f5426ce647d546fee55a3639378ef0c106bd",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension",
-        "fileSize": 52544,
+        "fileSize": 56508,
         "status": 1,
         "language": "en",
         "authors": [
@@ -14,7 +14,7 @@
             "Anime",
             "TvSeries"
         ],
-        "version": 8,
+        "version": 9,
         "internalName": "AniKoto",
         "description": "Anime Provider",
         "url": "https://raw.githubusercontent.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/AniKoto.cs3",
@@ -22,10 +22,10 @@
     },
     {
         "iconUrl": "https://t2.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://animesuge.cz&size=64",
-        "fileHash": "sha256-ae830d645515965871149e41083433619c542f0ca8b0936380089d08cfe89359",
+        "fileHash": "sha256-91a4ba4b0a7749b655d0ac0cc95c2b2347a018a5f403e8f5ef2e05add662e6c2",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension",
-        "fileSize": 33249,
+        "fileSize": 37194,
         "status": 1,
         "language": "en",
         "authors": [
@@ -36,7 +36,7 @@
             "AnimeMovie",
             "OVA"
         ],
-        "version": 7,
+        "version": 8,
         "internalName": "AnimeSuge",
         "url": "https://raw.githubusercontent.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/AnimeSuge.cs3",
         "name": "AnimeSuge"
@@ -231,10 +231,10 @@
     },
     {
         "iconUrl": "https://www.google.com/s2/favicons?domain=goldenaudiobook.com/&sz=%size%",
-        "fileHash": "sha256-503a36b6c1ceaabeadb6d5f232f527a347c6329d9a22897ca43809b8a68e9439",
+        "fileHash": "sha256-1f5656f7e709e13deb40e5eb3f72e56749d638dcb0cd194ca92d2ee83d87487c",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension",
-        "fileSize": 15144,
+        "fileSize": 15136,
         "status": 1,
         "language": "en",
         "authors": [
@@ -243,7 +243,7 @@
         "tvTypes": [
             "Others"
         ],
-        "version": 31,
+        "version": 32,
         "internalName": "GoldenAudiobook",
         "description": "Audiobooks - Use Picture in Picture or VLC as external player",
         "url": "https://raw.githubusercontent.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/GoldenAudiobook.cs3",

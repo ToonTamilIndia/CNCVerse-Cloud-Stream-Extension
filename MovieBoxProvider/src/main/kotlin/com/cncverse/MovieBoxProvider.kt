@@ -3,6 +3,7 @@
 import android.annotation.SuppressLint
 import android.net.Uri
 import com.fasterxml.jackson.databind.JsonNode
+import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.lagradost.cloudstream3.Actor
 import com.lagradost.cloudstream3.ActorData
@@ -43,6 +44,7 @@ import com.lagradost.cloudstream3.utils.newExtractorLink
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import java.net.URI
 import java.net.URLEncoder
 import java.security.MessageDigest
 import javax.crypto.Mac
@@ -57,12 +59,7 @@ import com.lagradost.cloudstream3.ui.settings.Globals.TV
 import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
 class MovieBoxProvider : MainAPI() {
     companion object {
-        @Volatile
-        private var bearerToken: String? = null
         var context: android.content.Context? = null
-
-        fun getBearerToken(): String? = bearerToken
-        fun setBearerToken(token: String?) { bearerToken = token }
     }
 
     override var mainUrl = "https://api3.aoneroom.com"
@@ -114,41 +111,46 @@ class MovieBoxProvider : MainAPI() {
         val model = brandModels[brand]!!.random()
         return BrandModel(brand, model)
     }
+    @Volatile
+    private var cachedGuestToken: String? = null
+    @Volatile
+    private var tokenLastFetchMs: Long = 0L
+
     /**
-     * Fetches an anonymous bearer token from the API.
-     * Used as a fallback when no x-user header is available.
+     * Fetches an anonymous guest bearer token from the x-user header of a lightweight API call.
+     * Tokens are cached for an hour; pass [forceRefresh] after a 401/441 response.
      */
-    private suspend fun fetchAnonymousToken(ua: String? = null): String? {
+    private suspend fun fetchAnonymousToken(forceRefresh: Boolean = false): String? {
+        val now = System.currentTimeMillis()
+        if (!forceRefresh && cachedGuestToken != null && now - tokenLastFetchMs < 3_600_000) {
+            return cachedGuestToken
+        }
         try {
-            val cached = getBearerToken()
-            if (cached != null) return cached
-            val userAgent = ua ?: "com.community.oneroom/50020088 (Linux; U; Android 13; en_US; Pixel 6; Build/TQ3A.230901.001; Cronet/145.0.7582.0)"
-            val pingUrl = "$mainUrl/wefeed-mobile-bff/tab/ranking-list?tabId=0&categoryType=4516404531735022304&page=1&perPage=1"
-            val xct = generateXClientToken()
-            val sig = generateXTrSignature("GET", "application/json", "application/json", pingUrl)
+            val pingUrl = "https://apig.inmoviebox.com/wefeed-mobile-bff/tab/ranking-list?tabId=0&categoryType=4516404531735022304&page=1&perPage=1"
+            val xClientToken = generateXClientToken(now)
+            val xTrSignature = generateXTrSignature("GET", "application/json", "application/json", pingUrl, hardcodedTimestamp = now)
             val headers = mapOf(
-                "user-agent" to userAgent,
+                "user-agent" to "com.community.mbox.in/50020042 (Linux; U; Android 16; en_IN; sdk_gphone64_x86_64; Build/BP22.250325.006; Cronet/133.0.6876.3)",
                 "accept" to "application/json",
                 "content-type" to "application/json",
-                "x-client-token" to xct,
-                "x-tr-signature" to sig,
-                "x-client-info" to """{"package_name":"com.community.oneroom","version_name":"3.0.13.0325.03","version_code":50020088,"os":"android","os_version":"13","device_id":"$deviceId","install_store":"ps","gaid":"1b2212c1-dadf-43c3-a0c8-bd6ce48ae22d","brand":"google","model":"Pixel 6","system_language":"en","net":"NETWORK_WIFI","region":"US","timezone":"Asia/Calcutta","sp_code":""}""",
+                "x-client-token" to xClientToken,
+                "x-tr-signature" to xTrSignature,
+                "x-client-info" to """{"package_name":"com.community.mbox.in","version_name":"3.0.03.0529.03","version_code":50020042,"os":"android","os_version":"16","device_id":"$deviceId","install_store":"ps","gaid":"d7578036d13336cc","brand":"google","model":"SM-S918B","system_language":"en","net":"NETWORK_WIFI","region":"IN","timezone":"Asia/Calcutta","sp_code":""}""",
                 "x-client-status" to "0"
             )
-            val response = app.get(pingUrl, headers = headers)
-            if (response.code != 200) return null
-            val xUser = response.headers["x-user"]
-            if (xUser.isNullOrBlank()) return null
-            val json = jacksonObjectMapper().readTree(xUser)
-            val token = json["token"]?.asText()
-            if (!token.isNullOrBlank()) {
-                setBearerToken(token)
+            val res = app.get(pingUrl, headers = headers)
+            val xUserHeader = res.headers["x-user"]
+            if (!xUserHeader.isNullOrBlank()) {
+                val tok = jacksonObjectMapper().readTree(xUserHeader)["token"]?.asText()
+                if (!tok.isNullOrBlank()) {
+                    cachedGuestToken = tok
+                    tokenLastFetchMs = now
+                    return tok
+                }
             }
-            return token
-        } catch (e: Exception) {
-            println("MovieBox: fetchAnonymousToken failed: ${e.message}")
-            return null
+        } catch (_: Exception) {
         }
+        return null
     }
 
     @SuppressLint("UseKtx")
@@ -359,33 +361,37 @@ class MovieBoxProvider : MainAPI() {
         val jsonBody = """{"page": $page, "perPage": 20, "keyword": "$query"}"""
         val xClientToken = generateXClientToken()
         val xTrSignature = generateXTrSignature("POST", "application/json", "application/json; charset=utf-8", url, jsonBody)
-        var token = getBearerToken()
-        if (token == null) {
-            val ua = "com.community.oneroom/50020042 (Linux; U; Android 13; en_US; ${randomBrandModel().brand}; Build/TQ3A.230901.001; Cronet/145.0.7582.0)"
-            val fetched = fetchAnonymousToken(ua)
-            if (!fetched.isNullOrBlank()) {
-                token = fetched
-            }
-        }
+        val token = fetchAnonymousToken()
         val headers = mutableMapOf(
-            "user-agent" to "com.community.oneroom/50020042 (Linux; U; Android 13; en_US; ${randomBrandModel().brand}; Build/TQ3A.230901.001; Cronet/145.0.7582.0)",
+            "user-agent" to "com.community.mbox.in/50020042 (Linux; U; Android 16; en_IN; sdk_gphone64_x86_64; Build/BP22.250325.006; Cronet/133.0.6876.3)",
             "accept" to "application/json",
             "content-type" to "application/json; charset=utf-8",
             "connection" to "keep-alive",
             "x-client-token" to xClientToken,
             "x-tr-signature" to xTrSignature,
-            "x-client-info" to """{"package_name":"com.community.oneroom","version_name":"3.0.13.0325.03","version_code":50020042,"os":"android","os_version":"13","device_id":"$deviceId","install_store":"ps","gaid":"1b2212c1-dadf-43c3-a0c8-bd6ce48ae22d","brand":"google","model":"${randomBrandModel()}","system_language":"en","net":"NETWORK_WIFI","region":"US","timezone":"Asia/Calcutta","sp_code":""}""",
+            "x-client-info" to """{"package_name":"com.community.mbox.in","version_name":"3.0.03.0529.03","version_code":50020042,"os":"android","os_version":"16","device_id":"$deviceId","install_store":"ps","gaid":"d7578036d13336cc","brand":"google","model":"${randomBrandModel()}","system_language":"en","net":"NETWORK_WIFI","region":"IN","timezone":"Asia/Calcutta","sp_code":""}""",
             "x-client-status" to "0"
         )
         if (!token.isNullOrBlank()) {
             headers["Authorization"] = "Bearer $token"
         }
-        val requestBody = jsonBody.toRequestBody("application/json; charset=utf-8".toMediaType())
-        val response = app.post(
+        var response = app.post(
             url,
             headers = headers,
-            requestBody = requestBody
+            requestBody = jsonBody.toRequestBody("application/json; charset=utf-8".toMediaType())
         )
+        if (response.code == 441 || response.code == 401) {
+            val freshToken = fetchAnonymousToken(forceRefresh = true)
+            if (!freshToken.isNullOrBlank()) {
+                headers["Authorization"] = "Bearer $freshToken"
+            }
+            headers["x-tr-signature"] = generateXTrSignature("POST", "application/json", "application/json; charset=utf-8", url, jsonBody)
+            response = app.post(
+                url,
+                headers = headers,
+                requestBody = jsonBody.toRequestBody("application/json; charset=utf-8".toMediaType())
+            )
+        }
 
         val responseBody = response.body.string()
         val mapper = jacksonObjectMapper()
@@ -432,22 +438,15 @@ class MovieBoxProvider : MainAPI() {
         val xClientToken = generateXClientToken()
         val xTrSignature = generateXTrSignature("GET", "application/json", "application/json", finalUrl)
 
-        var token = getBearerToken()
-        if (token == null) {
-            val ua = "com.community.oneroom/50020042 (Linux; U; Android 13; en_US; ${randomBrandModel().brand}; Build/TQ3A.230901.001; Cronet/145.0.7582.0)"
-            val fetched = fetchAnonymousToken(ua)
-            if (!fetched.isNullOrBlank()) {
-                token = fetched
-            }
-        }
+        val token = fetchAnonymousToken()
         val headers = mutableMapOf(
-            "user-agent" to "com.community.oneroom/50020042 (Linux; U; Android 13; en_US; ${randomBrandModel().brand}; Build/TQ3A.230901.001; Cronet/145.0.7582.0)",
+            "user-agent" to "com.community.mbox.in/50020042 (Linux; U; Android 16; en_IN; ${randomBrandModel()}; Build/BP22.250325.006; Cronet/133.0.6876.3)",
             "accept" to "application/json",
             "content-type" to "application/json",
             "connection" to "keep-alive",
             "x-client-token" to xClientToken,
             "x-tr-signature" to xTrSignature,
-            "x-client-info" to """{"package_name":"com.community.oneroom","version_name":"3.0.13.0325.03","version_code":50020042,"os":"android","os_version":"13","device_id":"$deviceId","install_store":"ps","gaid":"1b2212c1-dadf-43c3-a0c8-bd6ce48ae22d","brand":"google","model":"${randomBrandModel()}","system_language":"en","net":"NETWORK_WIFI","region":"US","timezone":"Asia/Calcutta","sp_code":""}""",
+            "x-client-info" to """{"package_name":"com.community.mbox.in","version_name":"3.0.03.0529.03","version_code":50020042,"os":"android","os_version":"16","device_id":"$deviceId","install_store":"ps","gaid":"d7578036d13336cc","brand":"google","model":"${randomBrandModel()}","system_language":"en","net":"NETWORK_WIFI","region":"IN","timezone":"Asia/Calcutta","sp_code":""}""",
             "x-client-status" to "0",
             "x-play-mode" to "2"
         )
@@ -455,7 +454,15 @@ class MovieBoxProvider : MainAPI() {
             headers["Authorization"] = "Bearer $token"
         }
 
-        val response = app.get(finalUrl, headers = headers)
+        var response = app.get(finalUrl, headers = headers)
+        if (response.code == 441 || response.code == 401) {
+            val freshToken = fetchAnonymousToken(forceRefresh = true)
+            if (!freshToken.isNullOrBlank()) {
+                headers["Authorization"] = "Bearer $freshToken"
+            }
+            headers["x-tr-signature"] = generateXTrSignature("GET", "application/json", "application/json", finalUrl)
+            response = app.get(finalUrl, headers = headers)
+        }
         if (response.code != 200) {
             throw ErrorLoadingException("Failed to load data: ${response.body.string()}")
         }
@@ -669,8 +676,6 @@ class MovieBoxProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val (brand, model) = randomBrandModel()
-
         try {
             val parts = data.split("|")
             val originalSubjectId = when {
@@ -688,28 +693,42 @@ class MovieBoxProvider : MainAPI() {
 
             val season = if (parts.size > 1) parts[1].toIntOrNull() ?: 0 else 0
             val episode = if (parts.size > 2) parts[2].toIntOrNull() ?: 0 else 0
-            val subjectUrl = "$mainUrl/wefeed-mobile-bff/subject-api/get?subjectId=$originalSubjectId"
-            val subjectXClientToken = generateXClientToken()
-            val subjectXTrSignature = generateXTrSignature("GET", "application/json", "application/json", subjectUrl)
-            val subjectHeaders = mapOf(
-                "user-agent" to "com.community.oneroom/50020088 (Linux; U; Android 13; en_US; $brand; Build/TQ3A.230901.001; Cronet/145.0.7582.0)",
-                "accept" to "application/json",
-                "content-type" to "application/json",
-                "connection" to "keep-alive",
-                "x-client-token" to subjectXClientToken,
-                "x-tr-signature" to subjectXTrSignature,
-                "x-client-info" to """{"package_name":"com.community.oneroom","version_name":"3.0.13.0325.03","version_code":50020088,"os":"android","os_version":"13","install_ch":"ps","device_id":"$deviceId","install_store":"ps","gaid":"1b2212c1-dadf-43c3-a0c8-bd6ce48ae22d","brand":"$model","model":"$brand","system_language":"en","net":"NETWORK_WIFI","region":"US","timezone":"Asia/Calcutta","sp_code":"","X-Play-Mode":"1","X-Idle-Data":"1","X-Family-Mode":"0","X-Content-Mode":"0"}""".trimIndent(),
-                "x-client-status" to "0"
-            )
-
-            val subjectResponse = app.get(subjectUrl, headers = subjectHeaders)
             val mapper = jacksonObjectMapper()
+
+            var token = fetchAnonymousToken()
+            val subjectUrl = "$mainUrl/wefeed-mobile-bff/subject-api/get?subjectId=$originalSubjectId"
+            fun subjectHeaders(): Map<String, String> = buildMap {
+                put("user-agent", MBOX_APP_UA)
+                put("accept", "application/json")
+                put("content-type", "application/json")
+                put("connection", "keep-alive")
+                put("x-client-token", generateXClientToken())
+                put("x-tr-signature", generateXTrSignature("GET", "application/json", "application/json", subjectUrl))
+                put("x-client-info", """{"package_name":"com.community.mbox.in","version_name":"4.0.02.0831.03","version_code":50020126,"os":"android","os_version":"14","install_ch":"official","device_id":"$deviceId","install_store":"official","gaid":"1b2212c1-dadf-43c3-a0c8-bd6ce48ae22d","brand":"Google","model":"Pixel 8","system_language":"en","net":"NETWORK_WIFI","region":"IN","timezone":"Asia/Calcutta","sp_code":"","X-Play-Mode":"1","X-Idle-Data":"1","X-Family-Mode":"0","X-Content-Mode":"0"}""")
+                put("x-client-status", "0")
+                if (!token.isNullOrBlank()) put("Authorization", "Bearer $token")
+            }
+
+            var subjectResponse = app.get(subjectUrl, headers = subjectHeaders())
+            if (subjectResponse.code == 441 || subjectResponse.code == 401) {
+                token = fetchAnonymousToken(forceRefresh = true)
+                subjectResponse = app.get(subjectUrl, headers = subjectHeaders())
+            }
+
             val subjectIds = mutableListOf<Pair<String, String>>() // Pair of (subjectId, language)
             var originalLanguageName = "Original"
+            var detailDomain: String? = null
+            var detailPath: String? = null
             if (subjectResponse.code == 200) {
-                val subjectResponseBody = subjectResponse.body.string()
-                val subjectRoot = mapper.readTree(subjectResponseBody)
-                val subjectData = subjectRoot["data"]
+                val subjectData = mapper.readTree(subjectResponse.body.string())["data"]
+                val detailUrl = subjectData?.get("detailUrl")?.asText()
+                if (!detailUrl.isNullOrBlank()) {
+                    runCatching {
+                        val uri = URI(detailUrl)
+                        detailDomain = "${uri.scheme}://${uri.host}"
+                        detailPath = detailUrl.trimEnd('/').substringAfterLast('/')
+                    }
+                }
                 val dubs = subjectData?.get("dubs")
                 if (dubs != null && dubs.isArray) {
                     for (dub in dubs) {
@@ -727,219 +746,228 @@ class MovieBoxProvider : MainAPI() {
             }
 
             val xUserHeader = subjectResponse.headers["x-user"]
-
-            var token = getBearerToken()
-
             if (!xUserHeader.isNullOrBlank()) {
-                val xUserJson = mapper.readTree(xUserHeader)
-                val xToken = xUserJson["token"]?.asText()
-                if (!xToken.isNullOrBlank()) {
-                    token = xToken
-                    setBearerToken(token)
-                }
-            }
-
-            if (token == null) {
-                val fetched = fetchAnonymousToken()
-                if (!fetched.isNullOrBlank()) {
-                    token = fetched
+                try {
+                    val xToken = mapper.readTree(xUserHeader)["token"]?.asText()
+                    if (!xToken.isNullOrBlank()) token = xToken
+                } catch (_: Exception) {
                 }
             }
 
             // Always add the original subject ID first as the default source with proper language name
             subjectIds.add(0, Pair(originalSubjectId, originalLanguageName))
 
+            val basePath = detailPath
+            val baseDomain = detailDomain
+            if (basePath.isNullOrBlank() || baseDomain.isNullOrBlank()) return true
 
+            val dubPaths = fetchDubDetailPaths(basePath, mapper)
 
             // Process each subjectId (including dubs)
             for ((subjectId, language) in subjectIds) {
                 try {
-                    val url = "$mainUrl/wefeed-mobile-bff/subject-api/play-info?subjectId=$subjectId&se=$season&ep=$episode"
+                    val langLabel = language.replace("dub", "Audio")
+                    val subPath = if (subjectId == originalSubjectId) basePath else dubPaths[subjectId] ?: continue
+                    val subDomain = baseDomain
 
-                    val xClientToken = generateXClientToken()
-                    val xTrSignature = generateXTrSignature("GET", "application/json", "application/json", url)
-                    val headers = mapOf(
-                        "Authorization" to "Bearer $token",
-                        "user-agent" to "com.community.oneroom/50020088 (Linux; U; Android 13; en_US; $brand; Build/TQ3A.230901.001; Cronet/145.0.7582.0)",
-                        "accept" to "application/json",
-                        "content-type" to "application/json",
-                        "connection" to "keep-alive",
-                        "x-client-token" to xClientToken,
-                        "x-tr-signature" to xTrSignature,
-                        "x-client-info" to """{"package_name":"com.community.oneroom","version_name":"3.0.13.0325.03","version_code":50020088,"os":"android","os_version":"13","install_ch":"ps","device_id":"$deviceId","install_store":"ps","gaid":"1b2212c1-dadf-43c3-a0c8-bd6ce48ae22d","brand":"$model","model":"$brand","system_language":"en","net":"NETWORK_WIFI","region":"US","timezone":"Asia/Calcutta","sp_code":"","X-Play-Mode":"1","X-Idle-Data":"1","X-Family-Mode":"0","X-Content-Mode":"0"}""".trimIndent(),
-                        "x-client-status" to "0"
-                    )
+                    val playUrl = "$mainUrl/wefeed-h5api-bff/subject/play?subjectId=$subjectId&se=$season&ep=$episode&detailPath=$subPath&streamSignType=1&supportCodecs%5Bhevc%5D=1&supportCodecs%5Bh264%5D=1"
+                    val playHeaders = buildMap {
+                        put("User-Agent", MBOX_MOBILE_WEB_UA)
+                        put("Referer", "$subDomain/movies/$subPath?id=$subjectId&type=/movie/detail&detailSe=&detailEp=&lang=en")
+                        put("Accept", "application/json")
+                        put("x-client-info", """{"timezone":"Asia/Calcutta"}""")
+                        put("x-request-lang", "en")
+                        put("x-vip-restrict", "0")
+                        put("x-no-high-risk-restrict", "0")
+                        put("x-source", "")
+                        if (!token.isNullOrBlank()) put("Authorization", "Bearer $token")
+                    }
 
-                    val response = app.get(url, headers = headers)
-                    if (response.code == 200) {
-                        val responseBody = response.body.string()
-                        val root = mapper.readTree(responseBody)
-                        val playData = root["data"]
-                        // Handle the new API response format with streams
-                        val streams = playData?.get("streams")
-                        if (streams != null && streams.isArray) {
-                            for (stream in streams) {
-                                val streamUrl = stream["url"]?.asText() ?: continue
-                                val format = stream["format"]?.asText() ?: ""
-                                val resolutions = stream["resolutions"]?.asText() ?: ""
+                    val response = app.get(playUrl, headers = playHeaders)
+                    if (response.code != 200) continue
+                    val playData = mapper.readTree(response.body.string())["data"] ?: continue
 
-                                val signCookieRaw = stream["signCookie"]?.asText()
-                                val signCookie = if (signCookieRaw.isNullOrEmpty()) null else signCookieRaw
-
-                                val id = stream["id"]?.asText() ?: "$subjectId|$season|$episode"
-                                val quality = getHighestQuality(resolutions)
-                                callback.invoke(
-                                    newExtractorLink(
-                                        source = "$name ${language.replace("dub","Audio")}",
-                                        name = "$name (${language.replace("dub","Audio")})",
-                                        url = streamUrl,
-                                        type = when {
-                                            streamUrl.startsWith("magnet:", ignoreCase = true) -> ExtractorLinkType.MAGNET
-                                            streamUrl.contains(".mpd", ignoreCase = true) -> ExtractorLinkType.DASH
-                                            streamUrl.substringAfterLast('.', "").equals("torrent", ignoreCase = true) -> ExtractorLinkType.TORRENT
-                                            format.equals("HLS", ignoreCase = true) || streamUrl.substringAfterLast('.', "").equals("m3u8", ignoreCase = true) -> ExtractorLinkType.M3U8
-                                            streamUrl.contains(".mp4", ignoreCase = true) || streamUrl.contains(".mkv", ignoreCase = true) -> ExtractorLinkType.VIDEO
-                                            else -> INFER_TYPE
-                                        }
-                                    ) {
-                                        this.headers = mapOf("Referer" to mainUrl)
-                                        if (quality != null) {
-                                            this.quality = quality
-                                        }
-                                        if (signCookie != null) {
-                                            this.headers += mapOf("Cookie" to signCookie)
-                                        }
-                                    }
-                                )
-                                val subLink = "$mainUrl/wefeed-mobile-bff/subject-api/get-stream-captions?subjectId=$subjectId&streamId=$id"
-                                val xClientToken = generateXClientToken()
-                                val xTrSignature = generateXTrSignature("GET", "", "", subLink)
-                                val headers = mapOf(
-                                    "Authorization" to "Bearer $token",
-                                    "user-agent" to "com.community.oneroom/50020088 (Linux; U; Android 13; en_US; $brand; Build/TQ3A.230901.001; Cronet/145.0.7582.0)",
-                                    "Accept" to "",
-                                    "x-client-info" to """{"package_name":"com.community.oneroom","version_name":"3.0.13.0325.03","version_code":50020088,"os":"android","os_version":"13","install_ch":"ps","device_id":"$deviceId","install_store":"ps","gaid":"1b2212c1-dadf-43c3-a0c8-bd6ce48ae22d","brand":"$model","model":"$brand","system_language":"en","net":"NETWORK_WIFI","region":"US","timezone":"Asia/Calcutta","sp_code":"","X-Play-Mode":"1","X-Idle-Data":"1","X-Family-Mode":"0","X-Content-Mode":"0"}""".trimIndent(),
-                                    "X-Client-Status" to "0",
-                                    "Content-Type" to "",
-                                    "X-Client-Token" to xClientToken,
-                                    "x-tr-signature" to xTrSignature,
-                                )
-                                val subResponse = app.get(subLink, headers = headers)
-                                val subRoot = mapper.readTree(subResponse.toString())
-                                val extCaptions = subRoot["data"]?.get("extCaptions")
-                                if (extCaptions != null && extCaptions.isArray) {
-                                    for (caption in extCaptions) {
-                                        val captionUrl = caption["url"]?.asText() ?: continue
-                                        val lang = caption["language"]?.asText()
-                                            ?: caption["lanName"]?.asText()
-                                            ?: caption["lan"]?.asText()
-                                            ?: "Unknown"
-                                        subtitleCallback.invoke(
-                                            newSubtitleFile(
-                                                url = captionUrl,
-                                                lang = "$lang (${language.replace("dub","Audio")})"
-                                            )
-                                        )
-                                    }
-                                }
-
-                                val subLink1 = "$mainUrl/wefeed-mobile-bff/subject-api/get-ext-captions?subjectId=$subjectId&resourceId=$id&episode=0"
-                                val xClientToken1 = generateXClientToken()
-                                val xTrSignature1 = generateXTrSignature("GET", "", "", subLink1)
-                                val headers1 = mapOf(
-                                    "Authorization" to "Bearer $token",
-                                    "User-Agent" to "com.community.mbox.in/50020042 (Linux; U; Android 16; en_IN; $brand; Build/BP22.250325.006; Cronet/133.0.6876.3)",
-                                    "Accept" to "",
-                                    "X-Client-Info" to """{"package_name":"com.community.mbox.in","version_name":"3.0.03.0529.03","version_code":50020042,"os":"android","os_version":"16","device_id":"$deviceId","install_store":"ps","gaid":"d7578036d13336cc","brand":"google","model":"$brand","system_language":"en","net":"NETWORK_WIFI","region":"IN","timezone":"Asia/Calcutta","sp_code":""}""",
-                                    "X-Client-Status" to "0",
-                                    "Content-Type" to "",
-                                    "X-Client-Token" to xClientToken1,
-                                    "x-tr-signature" to xTrSignature1,
-                                )
-                                val subResponse1 = app.get(subLink1, headers = headers1)
-
-                                val subRoot1 = mapper.readTree(subResponse1.toString())
-                                val extCaptions1 = subRoot1["data"]?.get("extCaptions")
-                                if (extCaptions1 != null && extCaptions1.isArray) {
-                                    for (caption in extCaptions1) {
-                                        val captionUrl = caption["url"]?.asText() ?: continue
-                                        val lang = caption["lan"]?.asText()
-                                            ?: caption["lanName"]?.asText()
-                                            ?: caption["language"]?.asText()
-                                            ?: "Unknown"
-                                        subtitleCallback.invoke(
-                                            newSubtitleFile(
-                                                url = captionUrl,
-                                                lang = "$lang (${language.replace("dub","Audio")})"
-                                            )
-                                        )
-                                    }
-                                }
-                                //hasAnyLinks = true
-                            }
-                        }
-
-
-                        //Ep Miss Match Fix (SplitsVilla used to test)
-                        if (streams == null || !streams.isArray || streams.size() == 0) {
-
-                            val fallbackUrl = "$mainUrl/wefeed-mobile-bff/subject-api/get?subjectId=$subjectId"
-
-                            val fallbackHeaders = headers.toMutableMap().apply {
-                                put("x-tr-signature", generateXTrSignature(
-                                    "GET",
-                                    "application/json",
-                                    "application/json",
-                                    fallbackUrl
-                                ))
-                            }
-
-                            val fallbackResponse = app.get(fallbackUrl, headers = fallbackHeaders)
-
-                            if (fallbackResponse.code == 200) {
-
-                                val fallbackRoot = mapper.readTree(fallbackResponse.body.string())
-                                val detectors = fallbackRoot["data"]?.get("resourceDetectors")
-
-                                detectors?.forEach { detector ->
-
-                                    detector["resolutionList"]?.forEach { video ->
-
-                                        val link = video["resourceLink"]?.asText() ?: return@forEach
-                                        val quality = video["resolution"]?.asInt() ?: 0
-                                        val se = video["se"]?.asInt()
-                                        val ep = video["ep"]?.asInt()
-
-                                        callback.invoke(
-                                            newExtractorLink(
-                                                source = "$name ${language.replace("dub","Audio")}",
-                                                name = "$name S${se}E${ep} ${quality}p (${language.replace("dub","Audio")})",
-                                                url = link,
-                                                type = ExtractorLinkType.VIDEO
-                                            ) {
-                                                this.headers = mapOf("Referer" to mainUrl)
-                                                this.quality = quality
-                                            }
-                                        )
-                                    }
-                                }
-                            }
+                    suspend fun emitAll(key: String, defaultFormat: String?) {
+                        val streams = playData[key]
+                        if (streams == null || !streams.isArray || streams.size() == 0) return
+                        for (stream in streams) {
+                            val fmt = defaultFormat ?: stream["format"]?.asText() ?: "MP4"
+                            emitNetStream(
+                                subjectId, season, episode, langLabel, token, mapper,
+                                subDomain, subPath, stream, fmt, callback, subtitleCallback
+                            )
                         }
                     }
+                    emitAll("dash", "DASH")
+                    emitAll("hls", "HLS")
+                    emitAll("streams", null)
                 } catch (_: Exception) {
                     continue
                 }
             }
-            
+
             return true
-              
+
         } catch (_: Exception) {
             return false
         }
     }
 
+    /** Maps each dub's subjectId to the H5 detailPath the web player expects for it. */
+    private suspend fun fetchDubDetailPaths(detailPath: String, mapper: ObjectMapper): Map<String, String> {
+        return try {
+            val res = app.get(
+                "https://movie-box.co/wefeed-h5api-bff/detail?detailPath=$detailPath",
+                headers = mapOf(
+                    "Accept" to "application/json",
+                    "Origin" to "https://movie-box.co",
+                    "Referer" to "https://mzfi.me/",
+                    "User-Agent" to MBOX_DESKTOP_WEB_UA,
+                    "x-client-info" to """{"timezone":"Asia/Calcutta"}"""
+                )
+            )
+            val dubs = mapper.readTree(res.body.string())["data"]?.get("subject")?.get("dubs")
+            buildMap {
+                dubs?.forEach { dub ->
+                    val id = dub["subjectId"]?.asText()
+                    val path = dub["detailPath"]?.asText()
+                    if (!id.isNullOrBlank() && !path.isNullOrBlank()) put(id, path)
+                }
+            }
+        } catch (_: Exception) {
+            emptyMap()
+        }
+    }
+
+    private suspend fun emitNetStream(
+        subjectId: String,
+        season: Int,
+        episode: Int,
+        langLabel: String,
+        token: String?,
+        mapper: ObjectMapper,
+        subDomain: String,
+        subPath: String,
+        stream: JsonNode,
+        fmt: String,
+        callback: (ExtractorLink) -> Unit,
+        subtitleCallback: (SubtitleFile) -> Unit
+    ) {
+        val link = stream["url"]?.asText() ?: return
+        val streamId = stream["id"]?.asText() ?: "$subjectId|$season|$episode"
+        val resStr = stream["resolutions"]?.asText() ?: ""
+        val quality = getHighestQuality(resStr)
+        val signCookie = stream["signCookie"]?.asText()?.takeIf { it.isNotEmpty() }
+        val signHeaderKey = stream["signHeaderKey"]?.asText()?.takeIf { it.isNotBlank() } ?: "X-MB-Token"
+
+        val linkType = when {
+            link.contains(".mpd", ignoreCase = true) -> ExtractorLinkType.DASH
+            fmt.equals("HLS", ignoreCase = true) || link.contains(".m3u8", ignoreCase = true) -> ExtractorLinkType.M3U8
+            fmt.equals("MP4", ignoreCase = true) || link.contains(".mp4", ignoreCase = true) || link.contains(".mkv", ignoreCase = true) -> ExtractorLinkType.VIDEO
+            else -> INFER_TYPE
+        }
+        val linkName = when (linkType) {
+            ExtractorLinkType.DASH -> "$name ($langLabel) DASH"
+            ExtractorLinkType.VIDEO -> "$name ($langLabel) MP4"
+            else -> "$name ($langLabel)"
+        }
+
+        callback.invoke(
+            newExtractorLink(
+                source = "$name $langLabel",
+                name = linkName,
+                url = link,
+                type = linkType
+            ) {
+                this.headers = if (linkType == ExtractorLinkType.VIDEO) {
+                    mapOf(
+                        "Referer" to "https://movie-box.co/",
+                        "User-Agent" to MBOX_DESKTOP_WEB_UA
+                    )
+                } else {
+                    buildMap {
+                        put("Origin", subDomain)
+                        put("Referer", "$subDomain/movies/$subPath?id=$subjectId&type=/movie/detail&detailSe=&detailEp=&lang=en")
+                        put("User-Agent", MBOX_MOBILE_WEB_UA)
+                        if (signCookie != null) put(signHeaderKey, signCookie)
+                    }
+                }
+                if (quality != null) {
+                    this.quality = quality
+                }
+            }
+        )
+
+        try {
+            val subLink = "$mainUrl/wefeed-mobile-bff/subject-api/get-stream-captions?subjectId=$subjectId&streamId=$streamId"
+            val subHeaders = mapOf(
+                "Authorization" to "Bearer $token",
+                "user-agent" to MBOX_APP_UA,
+                "Accept" to "",
+                "x-client-info" to """{"package_name":"com.community.mbox.in","version_name":"4.0.02.0831.03","version_code":50020126,"os":"android","os_version":"14","install_ch":"official","device_id":"$deviceId","install_store":"official","gaid":"1b2212c1-dadf-43c3-a0c8-bd6ce48ae22d","brand":"Google","model":"Pixel 8","system_language":"en","net":"NETWORK_WIFI","region":"IN","timezone":"Asia/Calcutta","sp_code":""}""",
+                "X-Client-Status" to "0",
+                "Content-Type" to "",
+                "X-Client-Token" to generateXClientToken(),
+                "x-tr-signature" to generateXTrSignature("GET", "", "", subLink),
+            )
+            val subRoot = mapper.readTree(app.get(subLink, headers = subHeaders).text)
+            val extCaptions = subRoot["data"]?.get("extCaptions")
+            if (extCaptions != null && extCaptions.isArray) {
+                for (caption in extCaptions) {
+                    val captionUrl = caption["url"]?.asText() ?: continue
+                    val lang = caption["language"]?.asText()
+                        ?: caption["lanName"]?.asText()
+                        ?: caption["lan"]?.asText()
+                        ?: "Unknown"
+                    subtitleCallback.invoke(
+                        newSubtitleFile(
+                            url = captionUrl,
+                            lang = "$lang ($langLabel)"
+                        )
+                    )
+                }
+            }
+        } catch (_: Exception) {
+        }
+
+        try {
+            val subLink = "$mainUrl/wefeed-mobile-bff/subject-api/get-ext-captions?subjectId=$subjectId&resourceId=$streamId&episode=0"
+            val subHeaders = mapOf(
+                "Authorization" to "Bearer $token",
+                "User-Agent" to MBOX_APP_UA,
+                "Accept" to "",
+                "X-Client-Info" to """{"package_name":"com.community.mbox.in","version_name":"4.0.02.0831.03","version_code":50020126,"os":"android","os_version":"14","device_id":"$deviceId","install_store":"official","gaid":"d7578036d13336cc","brand":"Google","model":"Pixel 8","system_language":"en","net":"NETWORK_WIFI","region":"IN","timezone":"Asia/Calcutta","sp_code":""}""",
+                "X-Client-Status" to "0",
+                "Content-Type" to "",
+                "X-Client-Token" to generateXClientToken(),
+                "x-tr-signature" to generateXTrSignature("GET", "", "", subLink),
+            )
+            val subRoot = mapper.readTree(app.get(subLink, headers = subHeaders).text)
+            val extCaptions = subRoot["data"]?.get("extCaptions")
+            if (extCaptions != null && extCaptions.isArray) {
+                for (caption in extCaptions) {
+                    val captionUrl = caption["url"]?.asText() ?: continue
+                    val lang = caption["lan"]?.asText()
+                        ?: caption["lanName"]?.asText()
+                        ?: caption["language"]?.asText()
+                        ?: "Unknown"
+                    subtitleCallback.invoke(
+                        newSubtitleFile(
+                            url = captionUrl,
+                            lang = "$lang ($langLabel)"
+                        )
+                    )
+                }
+            }
+        } catch (_: Exception) {
+        }
+    }
 
 }
+
+private const val MBOX_APP_UA = "com.community.mbox.in/50020126 (Linux; U; Android 14; en_IN; Pixel 8; Build/UD1A.230803.041; Cronet/145.0.7582.0)"
+private const val MBOX_MOBILE_WEB_UA = "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Mobile Safari/537.36"
+private const val MBOX_DESKTOP_WEB_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36"
 
 fun getHighestQuality(input: String): Int? {
     val qualities = listOf(

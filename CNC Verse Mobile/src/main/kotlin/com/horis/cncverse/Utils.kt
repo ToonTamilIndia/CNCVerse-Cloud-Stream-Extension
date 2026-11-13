@@ -227,7 +227,7 @@ private val inflightLock = Any()
 
 private fun isCookieValid(): Boolean {
     val (savedCookie, savedTimestamp) = NetflixMirrorStorage.getCookie()
-    return !savedCookie.isNullOrEmpty() && (System.currentTimeMillis() - savedTimestamp < 43_200_000)
+    return !savedCookie.isNullOrEmpty() && (System.currentTimeMillis() - savedTimestamp < 39_600_000)
 }
 
 fun primeBypass(mainUrl: String) {
@@ -293,6 +293,22 @@ private suspend fun doBypass(mainUrl: String, allowWebView: Boolean): String {
     return ""
 }
 
+private fun adClickUrl(html: String): String {
+    fun jsVar(name: String): String? =
+        Regex("""var\s+$name\s*=\s*"([^"]+)"""").find(html)?.groupValues?.get(1)
+
+    val sub = jsVar("Vsite2") ?: "userver"
+    val query = jsVar("Qury") ?: "ffr455"
+    val site = Regex("""var\s+Msite\s*=\s*([^;]+);""").find(html)?.groupValues?.get(1)
+        ?.let { Regex("""\s*\+?\s*Vsite2\s*\+?\s*""").replace(it, sub) }
+        ?.replace("\"", "")
+        ?.replace("'", "")
+        ?.trim()
+        ?.takeIf { it.startsWith("http") }
+        ?: "https://$sub.net52.cc/"
+    return "$site?$query="
+}
+
 private suspend fun netMirrorMobileBypass(mainUrl: String): String {
     return try {
         val host = mainUrl
@@ -307,12 +323,16 @@ private suspend fun netMirrorMobileBypass(mainUrl: String): String {
         // 1. Home page -> data-addhash. Some mirrors redirect /mobile/home to
         // dead domains (net77 -> expired net50); net52 serves it directly.
         var addhash = ""
+        var homeHtml = ""
         for (homeBase in listOf(mainUrl.trimEnd('/'), "https://net52.cc")) {
             try {
                 val homeRes = app.get("$homeBase/mobile/home?app=1", headers = homeHeaders, timeout = 30)
                 if (homeRes.code != 200) continue
                 addhash = Regex("""data-addhash="([^"]+)"""").find(homeRes.text)?.groupValues?.get(1).orEmpty()
-                if (addhash.isNotEmpty()) break
+                if (addhash.isNotEmpty()) {
+                    homeHtml = homeRes.text
+                    break
+                }
             } catch (_: Exception) { continue }
         }
         if (addhash.isEmpty()) return ""
@@ -322,10 +342,14 @@ private suspend fun netMirrorMobileBypass(mainUrl: String): String {
         // NOTE: the userver subdomain only exists on net52 (userver.net77.cc has
         // no DNS record); the backend session store is shared across mirrors,
         // so triggering via net52 works regardless of which mirror served home.
-        for (triggerHost in listOf("userver.net52.cc", "userver.$host")) {
+        // The home page declares the helper host (Msite/Vsite2) and its query key (Qury).
+        val clickBase = adClickUrl(homeHtml)
+        val queryKey = clickBase.substringAfterLast('?').removeSuffix("=")
+        val triggerBases = listOf(clickBase, "https://userver.$host/?$queryKey=").distinct()
+        for (triggerBase in triggerBases) {
             try {
                 app.get(
-                    "https://$triggerHost/?hee5=${java.net.URLEncoder.encode(addhash, "UTF-8")}&a=y&t=${System.currentTimeMillis()}",
+                    "$triggerBase${java.net.URLEncoder.encode(addhash, "UTF-8")}&a=y&t=${System.currentTimeMillis()}",
                     headers = mapOf(
                         "User-Agent" to NETMIRROR_MOBILE_UA,
                         "Referer" to "$mainUrl/mobile/home?app=1"

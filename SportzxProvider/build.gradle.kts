@@ -1,5 +1,5 @@
 // use an integer for version numbers
-version = 20
+version = 31
 
 dependencies {
     implementation("androidx.core:core:1.16.0")

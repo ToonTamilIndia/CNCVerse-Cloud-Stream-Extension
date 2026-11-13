@@ -1,4 +1,4 @@
-version = 33
+version = 36
 
 
 cloudstream {

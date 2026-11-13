@@ -140,7 +140,7 @@ class SportzxLiveEventsProvider(
         val time = try {
             info?.startTime?.let {
                 val df = SimpleDateFormat("yyyy/MM/dd HH:mm:ss Z", Locale.US)
-                val disp = SimpleDateFormat("MMM dd, yyyy hh:mm a", Locale.US)
+                val disp = SimpleDateFormat("MMM dd, yyyy hh:mm a z", Locale.US)
                 val d = df.parse(it)
                 d?.let { dd -> java.net.URLEncoder.encode(disp.format(dd), "UTF-8") } ?: ""
             } ?: ""
@@ -288,7 +288,7 @@ class SportzxLiveEventsProvider(
                 it.startTime?.let { st ->
                     try {
                         val df   = SimpleDateFormat("yyyy/MM/dd HH:mm:ss Z", Locale.US)
-                        val disp = SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.US)
+                        val disp = SimpleDateFormat("MMM dd, yyyy HH:mm z", Locale.US)
                         val d = df.parse(st)
                         d?.let { dd -> append("🕐 ${disp.format(dd)}\n") }
                     } catch (e: Exception) { append("🕐 $st\n") }

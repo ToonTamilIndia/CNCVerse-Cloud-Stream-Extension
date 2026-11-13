@@ -123,7 +123,7 @@ class PlayZTVLiveEventsProvider(private val customName: String = "⚡PlayZTV Liv
         val time = try {
             info?.startTime?.let {
                 val df = SimpleDateFormat("yyyy/MM/dd HH:mm:ss Z", Locale.US)
-                val disp = SimpleDateFormat("MMM dd, yyyy hh:mm a", Locale.US)
+                val disp = SimpleDateFormat("MMM dd, yyyy hh:mm a z", Locale.US)
                 df.parse(it)?.let { d -> encode(disp.format(d)) } ?: ""
             } ?: ""
         } catch (_: Exception) { "" }
@@ -237,7 +237,7 @@ class PlayZTVLiveEventsProvider(private val customName: String = "⚡PlayZTV Liv
                 i.startTime?.let {
                     try {
                         val df = SimpleDateFormat("yyyy/MM/dd HH:mm:ss Z", Locale.US)
-                        val disp = SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.US)
+                        val disp = SimpleDateFormat("MMM dd, yyyy HH:mm z", Locale.US)
                         df.parse(it)?.let { d -> append("🕐 ${disp.format(d)}\n") }
                     } catch (_: Exception) { append("🕐 $it\n") }
                 }

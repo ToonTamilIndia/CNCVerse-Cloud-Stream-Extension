@@ -162,7 +162,7 @@ class PlayFyLiveEvents(private val customName: String = "PlayFy Live Events", va
         val time = try {
             eventInfo?.startTime?.let {
                 val dateFormat = SimpleDateFormat("yyyy/MM/dd HH:mm:ss Z", Locale.US)
-                val displayFormat = SimpleDateFormat("MMM dd, yyyy hh:mm a", Locale.US)
+                val displayFormat = SimpleDateFormat("MMM dd, yyyy hh:mm a z", Locale.US)
                 val date = dateFormat.parse(it)
                 date?.let { d -> java.net.URLEncoder.encode(displayFormat.format(d), "UTF-8") } ?: ""
             } ?: ""
@@ -308,7 +308,7 @@ class PlayFyLiveEvents(private val customName: String = "PlayFy Live Events", va
                 info.startTime?.let {
                     try {
                         val dateFormat = SimpleDateFormat("yyyy/MM/dd HH:mm:ss Z", Locale.US)
-                        val displayFormat = SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.US)
+                        val displayFormat = SimpleDateFormat("MMM dd, yyyy HH:mm z", Locale.US)
                         val date = dateFormat.parse(it)
                         date?.let { d -> append("🕐 ${displayFormat.format(d)}\n") }
                     } catch (e: Exception) {

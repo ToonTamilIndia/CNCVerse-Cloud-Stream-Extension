@@ -663,20 +663,23 @@ class IptvPlaylistParser {
                     line.startsWith("#EXTHTTP:") -> {
                         val json = line.removePrefix("#EXTHTTP:").trim()
                         try {
+                            // Upstream lowercases every key so EXTHTTP headers work in any case.
                             val map = parseJson<Map<String, String>>(json)
-                            if (map.containsKey("cookie")) {
-                                bufferedCookie = map["cookie"]
-                            }
-                            if (map.containsKey("user-agent")) {
-                                bufferedUserAgent = map["user-agent"]
+                                .mapKeys { it.key.lowercase(java.util.Locale.ROOT) }
+                            map["cookie"]?.let { bufferedCookie = it }
+                            map["user-agent"]?.let { bufferedUserAgent = it }
+                            (map["referer"] ?: map["referrer"])?.let {
+                                bufferedHeaders = bufferedHeaders + mapOf("Referer" to it)
                             }
                         } catch (e: Exception) { }
                     }
                     line.startsWith(M3UPlaylistPlayer.EXT_VLC_OPT) -> {
                         val userAgent = line.getTagValue("http-user-agent")
                         val referrer = line.getTagValue("http-referrer") ?: line.getTagValue("http-referer")
+                        val cookie = line.getTagValue("http-cookie")
 
                         if (userAgent != null) bufferedUserAgent = userAgent
+                        if (cookie != null) bufferedCookie = cookie
                         if (referrer != null) {
                             bufferedHeaders = bufferedHeaders + mapOf("Referer" to referrer)
                         }

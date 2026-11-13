@@ -197,10 +197,51 @@ private fun String.hexToBase64UrlOrNull(): String? {
             cipher.init(Cipher.DECRYPT_MODE, secretKey, ivSpec)
             val decrypted = cipher.doFinal(encrypted)
 
-            String(decrypted, StandardCharsets.UTF_8)
+            val decryptedText = String(decrypted, StandardCharsets.UTF_8)
+            // Upstream converts encrypted JSON channel payloads into a clean M3U
+            // playlist so the parser below can consume them uniformly.
+            channelPayloadToM3U(decryptedText) ?: decryptedText
         } catch (e: Exception) {
             content // Return original content if decryption fails
         }
+    }
+
+    /**
+     * Ported from upstream `PlayZTV.decryptContent`: the custom playlist endpoint
+     * may return a JSON array of `{"channel": "<json>"}` wrappers instead of an
+     * M3U file. Convert those channels into an `#EXTM3U` playlist.
+     */
+    private fun channelPayloadToM3U(decrypted: String): String? {
+        val wrappers = runCatching {
+            parseJson<List<PlayZTVChannelWrapper>>(decrypted)
+        }.getOrNull() ?: return null
+
+        val validChannels = wrappers.mapNotNull { wrapper ->
+            runCatching { parseJson<PlayZTVChannelData>(wrapper.channel) }.getOrNull()
+        }.filter { !it.links.isNullOrBlank() }
+
+        if (validChannels.isEmpty()) return null
+
+        val sb = StringBuilder("#EXTM3U\n")
+        for (channel in validChannels) {
+            val name = channel.name?.trim()?.ifBlank { "Channel" } ?: "Channel"
+            val logo = channel.logo ?: ""
+            val links = channel.links?.split(",") ?: emptyList()
+            val linkNames = channel.link_names
+
+            links.forEachIndexed { idx, rawLink ->
+                val link = rawLink.trim()
+                if (link.isEmpty()) return@forEachIndexed
+                val title = if (links.size <= 1) {
+                    linkNames?.getOrNull(idx)?.trim()?.takeIf { it.isNotEmpty() } ?: name
+                } else {
+                    "$name (${idx + 1})"
+                }
+                sb.append("#EXTINF:-1 tvg-logo=\"$logo\" group-title=\"Live\",$title\n")
+                sb.append(link).append("\n")
+            }
+        }
+        return sb.toString()
     }
 
   private fun getMpdStream(url: String, customHeaders: Map<String, String>): String {

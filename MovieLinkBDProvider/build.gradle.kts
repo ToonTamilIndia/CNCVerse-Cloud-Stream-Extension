@@ -24,5 +24,5 @@ cloudstream {
     )
     language = "bn"
 
-    iconUrl = "https://movielinkbd.one/img/favicon-192x192.png"
+    iconUrl = "https://raw.githubusercontent.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/master/MovieLinkBDProvider/icon.webp"
 }

@@ -515,7 +515,7 @@ class MovieBoxProviderIN : MainAPI() {
 
                 seasons.forEach { season ->
                     val seasonNumber = season["se"]?.asInt() ?: 1
-                    val maxEp = season["maxEp"]?.asInt() ?: 1
+                    val maxEp = (season["maxEp"]?.asInt() ?: 1).coerceIn(1, 10000)
 
                     val epSet = episodeMap.getOrPut(seasonNumber) { mutableSetOf() }
 
@@ -527,13 +527,18 @@ class MovieBoxProviderIN : MainAPI() {
 
             val episodes = mutableListOf<Episode>()
 
+            fun epKey(season: Int, episode: Int) = (season.toLong() shl 32) or (episode.toLong() and 0xffffffffL)
+            val metaByEpisode = HashMap<Long, JsonNode>(metaVideos.size * 2)
+            for (video in metaVideos) {
+                val s = video["season"]?.asInt() ?: continue
+                val e = video["episode"]?.asInt() ?: continue
+                metaByEpisode.putIfAbsent(epKey(s, e), video)
+            }
+
             episodeMap.forEach { (seasonNumber, epSet) ->
                 epSet.sorted().forEach { episodeNumber ->
 
-                    val epMeta = metaVideos.firstOrNull {
-                        it["season"]?.asInt() == seasonNumber &&
-                                it["episode"]?.asInt() == episodeNumber
-                    }
+                    val epMeta = metaByEpisode[epKey(seasonNumber, episodeNumber)]
 
                     val epName = epMeta?.get("name")?.asText()
                         ?: epMeta?.get("title")?.asText()?.takeIf { it.isNotBlank() }
@@ -551,7 +556,8 @@ class MovieBoxProviderIN : MainAPI() {
                         ?.toIntOrNull()
 
                     val aired = epMeta?.get("released")?.asText()
-                        ?.takeIf { it.isNotBlank() } ?: ""
+                        ?.take(10)
+                        ?.takeIf { it.matches(Regex("\\d{4}-\\d{2}-\\d{2}")) }
 
                     episodes.add(
                         newEpisode("$id|$seasonNumber|$episodeNumber") {
@@ -561,7 +567,7 @@ class MovieBoxProviderIN : MainAPI() {
                             this.posterUrl = epThumb
                             this.description = epDesc
                             this.runTime = runtime
-                            addDate(aired)
+                            if (aired != null) addDate(aired)
                         }
                     )
                 }

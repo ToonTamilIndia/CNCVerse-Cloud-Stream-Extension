@@ -1,12 +1,6 @@
 ﻿package com.cncverse
 
-import android.os.Handler
-import android.os.Looper
 import android.util.Base64
-import android.webkit.WebChromeClient
-import android.webkit.WebSettings
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
@@ -20,19 +14,7 @@ import com.lagradost.cloudstream3.utils.newExtractorLink
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.TimeUnit
-import kotlin.coroutines.resume
-import kotlin.coroutines.suspendCoroutine
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import okhttp3.Interceptor
 import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.Response
-import com.lagradost.cloudstream3.APIHolder.unixTime
-import com.lagradost.cloudstream3.ui.settings.Globals.TV
-import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
-import android.content.Intent
-import android.net.Uri
 
 /**
  * PlayZTV Live Events provider.
@@ -41,14 +23,13 @@ import android.net.Uri
  * IPTV provider). Event slugs resolve to stream lists via
  * `PlayZTVProviderManager.fetchChannelStreams(slug)`.
  */
-class PlayZTVLiveEventsProvider(private val customName: String = "⚡PlayZTV Live Events", val customCatLink: String? = null) : MainAPI() {
+class PlayZTVLiveEventsProvider(override var name: String = "⚡PlayZTV Live Events", val customCatLink: String? = null) : MainAPI() {
 
     companion object {
         var context: android.content.Context? = null
     }
 
     override var mainUrl = "https://adsflw.xyz"
-    override var name = customName
     override var lang = "hi"
     override val hasMainPage = true
     override val hasChromecastSupport = true
@@ -64,18 +45,22 @@ class PlayZTVLiveEventsProvider(private val customName: String = "⚡PlayZTV Liv
     private fun createDisplayTitle(event: PlayZLiveEventData): String {
         val info = event.eventInfo ?: return event.title
         return if (!info.teamA.isNullOrBlank() && !info.teamB.isNullOrBlank() &&
-            info.teamA != info.teamB
+            !isSameTeam(info.teamA, info.teamB)
         ) "${info.teamA} vs ${info.teamB}"
         else info.teamA ?: event.title
+    }
+
+    private fun parseTime(value: String?): Long? {
+        val fmt = SimpleDateFormat("yyyy/MM/dd HH:mm:ss Z", Locale.US)
+        return value?.let { fmt.parse(it)?.time }
     }
 
     private fun getEventStatus(event: PlayZLiveEventData): String {
         val info = event.eventInfo ?: return ""
         val now = System.currentTimeMillis()
         return try {
-            val fmt = SimpleDateFormat("yyyy/MM/dd HH:mm:ss Z", Locale.US)
-            val start = info.startTime?.let { fmt.parse(it)?.time }
-            val end = info.endTime?.let { fmt.parse(it)?.time }
+            val start = parseTime(info.startTime)
+            val end = parseTime(info.endTime)
             when {
                 end != null && now >= end -> "✅"
                 start != null && now >= start -> "🔴"
@@ -89,11 +74,9 @@ class PlayZTVLiveEventsProvider(private val customName: String = "⚡PlayZTV Liv
         val info = event.eventInfo ?: return false
         val now = System.currentTimeMillis()
         return try {
-            val fmt = SimpleDateFormat("yyyy/MM/dd HH:mm:ss Z", Locale.US)
-            val start = info.startTime?.let { fmt.parse(it)?.time }
-            val end = info.endTime?.let { fmt.parse(it)?.time }
-            if (end != null && now >= end) false
-            else start != null && now >= start
+            val start = parseTime(info.startTime)
+            val end = parseTime(info.endTime)
+            (end == null || now < end) && start != null && now >= start
         } catch (_: Exception) { false }
     }
 
@@ -101,10 +84,14 @@ class PlayZTVLiveEventsProvider(private val customName: String = "⚡PlayZTV Liv
         val info = event.eventInfo ?: return false
         val now = System.currentTimeMillis()
         return try {
-            val fmt = SimpleDateFormat("yyyy/MM/dd HH:mm:ss Z", Locale.US)
-            val end = info.endTime?.let { fmt.parse(it)?.time }
+            val end = parseTime(info.endTime)
             end != null && now >= end
         } catch (_: Exception) { false }
+    }
+
+    private fun isSameTeam(a: String?, b: String?): Boolean {
+        if (a.isNullOrBlank() || b.isNullOrBlank()) return false
+        return a.trim().equals(b.trim(), ignoreCase = true)
     }
 
     private fun generateMatchCardUrl(event: PlayZLiveEventData): String {
@@ -114,8 +101,11 @@ class PlayZTVLiveEventsProvider(private val customName: String = "⚡PlayZTV Liv
         val title = encode(info?.eventName ?: event.title)
         val teamA = encode(info?.teamA ?: "Team A")
         val teamB = encode(info?.teamB ?: "Team B")
-        val teamAImg = info?.teamAFlag ?: ""
-        val teamBImg = info?.teamBFlag ?: ""
+        val sameTeams = isSameTeam(info?.teamA, info?.teamB)
+        val teamAImg = info?.teamAFlag?.takeIf { it.isNotBlank() }
+            ?: (if (sameTeams) info?.teamBFlag else null)
+            ?: ""
+        val teamBImg = if (sameTeams) "" else info?.teamBFlag ?: ""
         val eventLogo = info?.eventLogo ?: ""
         val isLive = isEventLive(event)
         val isEnded = isEventEnded(event)
@@ -129,16 +119,35 @@ class PlayZTVLiveEventsProvider(private val customName: String = "⚡PlayZTV Liv
         } catch (_: Exception) { "" }
 
         return buildString {
-            append("https://live-card-png.cricify.workers.dev/?")
+            append("https://card.cncverse.dpdns.org/?")
             append("title=$title")
             append("&teamA=$teamA")
-            append("&teamB=$teamB")
+            if (!sameTeams) append("&teamB=$teamB")
             if (teamAImg.isNotBlank()) append("&teamAImg=$teamAImg")
             if (teamBImg.isNotBlank()) append("&teamBImg=$teamBImg")
             if (eventLogo.isNotBlank()) append("&eventLogo=$eventLogo")
             if (time.isNotBlank()) append("&time=$time")
             append("&isLive=$isLive")
             append("&isEnded=$isEnded")
+        }
+    }
+
+    private fun toSearchResponse(event: PlayZLiveEventData): SearchResponse {
+        val displayTitle = createDisplayTitle(event)
+        val status = getEventStatus(event)
+        val fullTitle = if (status.isNotBlank()) "$status $displayTitle" else displayTitle
+        val poster = if (event.cat == "Custom" && !event.image.isNullOrBlank()) {
+            event.image
+        } else {
+            generateMatchCardUrl(event)
+        }
+        val loadData = LiveEventLoadData(
+            eventId = event.id, title = displayTitle, poster = poster,
+            slug = event.slug, formats = event.formats ?: emptyList(),
+            eventInfo = event.eventInfo
+        )
+        return newLiveSearchResponse(fullTitle, loadData.toJson(), TvType.Live) {
+            this.posterUrl = poster
         }
     }
 
@@ -156,6 +165,7 @@ class PlayZTVLiveEventsProvider(private val customName: String = "⚡PlayZTV Liv
     // ── CloudStream interface ─────────────────────────────────────────────────
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        PlayZTVProviderManager.refreshFromFirebase()
         val events = if (customCatLink != null) {
             PlayZTVProviderManager.fetchCustomEvents(customCatLink)
         } else {
@@ -172,21 +182,24 @@ class PlayZTVLiveEventsProvider(private val customName: String = "⚡PlayZTV Liv
                     else -> "📺"
                 }
                 val items = catEvents
-                    .sortedByDescending { isEventLive(it) }
-                    .map { event ->
-                        val displayTitle = createDisplayTitle(event)
-                        val status = getEventStatus(event)
-                        val fullTitle = if (status.isNotBlank()) "$status $displayTitle" else displayTitle
-                        val poster = generateMatchCardUrl(event)
-                        val loadData = LiveEventLoadData(
-                            eventId = event.id, title = displayTitle, poster = poster,
-                            slug = event.slug, formats = event.formats ?: emptyList(),
-                            eventInfo = event.eventInfo
-                        )
-                        newLiveSearchResponse(fullTitle, loadData.toJson(), TvType.Live) {
-                            this.posterUrl = poster
+                    .sortedWith(
+                        compareBy<PlayZLiveEventData> { event ->
+                            val status = getEventStatus(event)
+                            when {
+                                status.contains("🔴") -> 0
+                                status.contains("🔜") -> 1
+                                status.contains("✅") -> 2
+                                else -> 3
+                            }
+                        }.thenBy { event ->
+                            try {
+                                parseTime(event.eventInfo?.startTime) ?: Long.MAX_VALUE
+                            } catch (_: Exception) {
+                                Long.MAX_VALUE
+                            }
                         }
-                    }
+                    )
+                    .map { toSearchResponse(it) }
                 HomePageList("$icon $category", items, isHorizontalImages = true)
             }
             .sortedBy { list ->
@@ -202,32 +215,22 @@ class PlayZTVLiveEventsProvider(private val customName: String = "⚡PlayZTV Liv
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        
-        return PlayZTVProviderManager.fetchLiveEvents()
+        val events = if (customCatLink != null) {
+            PlayZTVProviderManager.fetchCustomEvents(customCatLink)
+        } else {
+            PlayZTVProviderManager.fetchLiveEvents()
+        }
+        return events
             .filter { event ->
                 listOfNotNull(
                     event.title, event.eventInfo?.teamA, event.eventInfo?.teamB,
                     event.eventInfo?.eventName, event.eventInfo?.eventType
                 ).joinToString(" ").contains(query, ignoreCase = true)
             }
-            .map { event ->
-                val displayTitle = createDisplayTitle(event)
-                val status = getEventStatus(event)
-                val fullTitle = if (status.isNotBlank()) "$status $displayTitle" else displayTitle
-                val poster = generateMatchCardUrl(event)
-                val loadData = LiveEventLoadData(
-                    eventId = event.id, title = displayTitle, poster = poster,
-                    slug = event.slug, formats = event.formats ?: emptyList(),
-                    eventInfo = event.eventInfo
-                )
-                newLiveSearchResponse(fullTitle, loadData.toJson(), TvType.Live) {
-                    this.posterUrl = poster
-                }
-            }
+            .map { toSearchResponse(it) }
     }
 
     override suspend fun load(url: String): LoadResponse {
-        
         val data = parseJson<LiveEventLoadData>(url)
         val info = data.eventInfo
         val plot = buildString {
@@ -250,8 +253,6 @@ class PlayZTVLiveEventsProvider(private val customName: String = "⚡PlayZTV Liv
         }
     }
 
-
-
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -259,98 +260,79 @@ class PlayZTVLiveEventsProvider(private val customName: String = "⚡PlayZTV Liv
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val loadData = parseJson<LiveEventLoadData>(data)
-        val streams = PlayZTVProviderManager.fetchChannelStreams(loadData.slug)
-        if (streams.isNullOrEmpty()) return false
-        streams.forEach { stream ->
+        val streams = if (loadData.slug.isNotBlank() && !loadData.slug.startsWith("http", ignoreCase = true)) {
+            PlayZTVProviderManager.fetchChannelStreams(loadData.slug)
+        } else {
+            null
+        }
+        // Custom channels carry their links directly in the formats list.
+        val streamList = when {
+            !streams.isNullOrEmpty() -> streams
+            loadData.formats.isNotEmpty() -> loadData.formats.mapNotNull { format ->
+                format.webLink?.let { PlayZStreamUrl(format.title ?: "Server", it, null, null, null) }
+            }
+            else -> emptyList()
+        }
+        if (streamList.isEmpty()) return false
+        streamList.forEach { stream ->
             val serverName = stream.name ?: "Server"
             val streamLink = stream.link ?: return@forEach
             val (url, headers) = parseStreamLink(streamLink)
             if (url.isBlank()) return@forEach
 
             try {
-                when {
-                    url.contains(".mpd") -> {
-                        val drmInfo = stream.api?.split(":")
-                        if (drmInfo != null && drmInfo.size == 2) {
-                            val kidBase64 = hexToBase64(drmInfo[0])
-                            val keyBase64 = hexToBase64(drmInfo[1])
-                            callback.invoke(
-                                newDrmExtractorLink(this.name, serverName, url, INFER_TYPE, CLEARKEY_UUID) {
-                                    this.quality = Qualities.Unknown.value
-                                    this.key = keyBase64
-                                    this.kid = kidBase64
-                                    if (headers.isNotEmpty()) this.headers = headers
-                                }
-                            )
-                        } else {
-                            callback.invoke(
-                                newExtractorLink(this.name, serverName, url, ExtractorLinkType.DASH) {
-                                    this.quality = Qualities.Unknown.value
-                                    if (headers.isNotEmpty()) this.headers = headers
-                                }
-                            )
-                        }
-                    }
-                    else -> {
-                        val finalHeaders = headers.toMutableMap()
-                        if (!finalHeaders.containsKey("User-Agent")) {
-                            finalHeaders["User-Agent"] =
-                                "Mozilla/5.0 (Linux; Android 10; Pixel 3 XL) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
-                        }
+                if (url.contains(".mpd")) {
+                    val drmInfo = stream.api?.split(":")
+                    if (drmInfo != null && drmInfo.size == 2) {
+                        val kidBase64 = hexToBase64(drmInfo[0])
+                        val keyBase64 = hexToBase64(drmInfo[1])
                         callback.invoke(
-                            newExtractorLink(this.name, serverName, url, ExtractorLinkType.M3U8) {
+                            newDrmExtractorLink(this.name, serverName, url, INFER_TYPE, CLEARKEY_UUID) {
                                 this.quality = Qualities.Unknown.value
-                                if (finalHeaders.isNotEmpty()) this.headers = finalHeaders
+                                this.key = keyBase64
+                                this.kid = kidBase64
+                                if (headers.isNotEmpty()) this.headers = headers
+                            }
+                        )
+                    } else {
+                        callback.invoke(
+                            newExtractorLink(this.name, serverName, url, ExtractorLinkType.DASH) {
+                                this.quality = Qualities.Unknown.value
+                                if (headers.isNotEmpty()) this.headers = headers
                             }
                         )
                     }
+                } else {
+                    val finalHeaders = headers.toMutableMap()
+                    if (!finalHeaders.containsKey("User-Agent")) {
+                        finalHeaders["User-Agent"] =
+                            "Mozilla/5.0 (Linux; Android 10; Pixel 3 XL) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
+                    }
+                    val type = if (url.contains(".m3u") || url.contains(".m3u8")) ExtractorLinkType.M3U8 else INFER_TYPE
+                    callback.invoke(
+                        newExtractorLink(this.name, serverName, url, type) {
+                            this.quality = Qualities.Unknown.value
+                            if (finalHeaders.isNotEmpty()) this.headers = finalHeaders
+                        }
+                    )
                 }
             } catch (e: Exception) { e.printStackTrace() }
         }
         return true
     }
 
-@Suppress("ObjectLiteralToLambda")
-override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-
-    return object : Interceptor {
-
-        override fun intercept(chain: Interceptor.Chain): Response {
-
-            var request = chain.request()
-
-            // FIX encoded slash issue
-            // %2F -> /
-            val fixedUrl = request.url.toString()
-                .replace(Regex("(?i)%2f"), "/")
-
-            // Rebuild request with fixed URL
-            request = request.newBuilder()
-                .url(fixedUrl)
-                .header(
-                    "User-Agent",
-                    "Mozilla/5.0 (Linux; Android 10; Pixel 3 XL) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
-                )
-                .build()
-
-            return chain.proceed(request)
-        }
-    }
-}
-
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     /** Parses `url|Header1=val1&Header2=val2` format. */
     private fun parseStreamLink(link: String): Pair<String, Map<String, String>> {
-        if (!link.contains("|")) return link to emptyMap()
+        val headers = mutableMapOf<String, String>()
+        if (!link.contains("|")) return link to headers
         val parts = link.split("|", limit = 2)
-        var url = parts[0].trim()
-        url = url.replace("%2F", "/")
+        val url = parts[0]
         if (parts.size > 1) {
-            val headerPairs = parts[1].split("&")
-            val headers = headerPairs.mapNotNull { headerPair ->
+            parts[1].split("&").forEach { headerPair ->
                 val keyValue = headerPair.split("=", limit = 2)
-                if (keyValue.size != 2) return@mapNotNull null
+                if (keyValue.size != 2) return@forEach
                 val key = keyValue[0].trim()
                 val value = keyValue[1].trim()
                 val headerName = when (key.lowercase()) {
@@ -360,11 +342,10 @@ override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
                     "referer" -> "Referer"
                     else -> key
                 }
-                headerName to value
-            }.toMap()
-            return url to headers
+                headers[headerName] = value
+            }
         }
-        return url to emptyMap()
+        return url to headers
     }
 
     private fun hexToBase64(hex: String): String {

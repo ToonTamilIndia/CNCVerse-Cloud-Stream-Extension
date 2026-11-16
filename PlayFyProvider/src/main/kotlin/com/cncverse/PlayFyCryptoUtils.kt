@@ -1,10 +1,7 @@
 package com.cncverse
 
 import android.util.Base64
-import com.fasterxml.jackson.core.type.TypeReference
 import com.lagradost.cloudstream3.utils.AppUtils
-import kotlinx.serialization.SerializationException
-import kotlinx.serialization.modules.SerializersModule
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
@@ -15,63 +12,10 @@ object PlayFyCryptoUtils {
     val DEFAULT_LORA = BuildConfig.PLAYFY_DEFAULT_LORA
     val DEFAULT_SIG = BuildConfig.PLAYFY_DEFAULT_SIG
 
-    private val AES_KEY = BuildConfig.PLAYFY_AES_KEY
-    private val AES_IV = BuildConfig.PLAYFY_AES_IV
-    private val SHUFFLED_ALPHABET = BuildConfig.PLAYFY_SHUFFLED_ALPHABET
-    private val STANDARD_ALPHABET = BuildConfig.PLAYFY_STANDARD_ALPHABET
-
     private val FALLBACK_KEY = BuildConfig.PLAYFY_FALLBACK_KEY.toByteArray(Charsets.ISO_8859_1)
     private val FALLBACK_IV = BuildConfig.PLAYFY_FALLBACK_IV.toByteArray(Charsets.ISO_8859_1)
     private const val FNV32_PRIME = 16777619L
     private const val MASK32 = 4294967295L
-
-    private val decodeTable: CharArray by lazy {
-        val table = CharArray(128) { it.toChar() }
-        for (i in SHUFFLED_ALPHABET.indices) {
-            table[SHUFFLED_ALPHABET[i].code] = STANDARD_ALPHABET[i]
-        }
-        table
-    }
-
-    private fun decryptSubstitution(str: String): String {
-        val chars = CharArray(str.length) { i ->
-            val c = str[i].code
-            if (c in 0..127) decodeTable[c] else str[i]
-        }
-        return String(chars)
-    }
-
-    fun decryptHttpResponse(str: String): String {
-        if (str.startsWith("{") || str.startsWith("[")) return str
-        return try {
-            val substituted = decryptSubstitution(str)
-            val padded = if (substituted.length % 4 != 0) {
-                substituted + "=".repeat(4 - (substituted.length % 4))
-            } else {
-                substituted
-            }
-            val decoded = Base64.decode(padded, Base64.DEFAULT)
-            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
-            cipher.init(
-                Cipher.DECRYPT_MODE,
-                SecretKeySpec(AES_KEY.toByteArray(Charsets.UTF_8), "AES"),
-                IvParameterSpec(AES_IV.toByteArray(Charsets.UTF_8))
-            )
-            String(cipher.doFinal(decoded), Charsets.UTF_8)
-        } catch (_: Exception) {
-            ""
-        }
-    }
-
-    fun decrypt(str: String): String? = decryptHttpResponse(str).ifBlank { null }
-
-    fun hexToBase64Unpadded(hex: String): String {
-        val clean = hex.replace("-", "").replace(" ", "")
-        val bytes = ByteArray(clean.length / 2) { i ->
-            clean.substring(i * 2, i * 2 + 2).toInt(16).toByte()
-        }
-        return Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
-    }
 
     private fun fnv1a32(data: ByteArray, seed: Long): Long {
         var h = seed and MASK32
@@ -192,9 +136,9 @@ object PlayFyCryptoUtils {
         }
     }
 
-    private fun parseJsonToMap(json: String): Map<String, Any> {
+    private fun parseJsonToMap(json: String): Map<String, Any?> {
         return try {
-            AppUtils.parseJson<Map<String, Any>>(json)
+            AppUtils.parseJson<Map<String, Any?>>(json)
         } catch (e: Exception) {
             emptyMap()
         }

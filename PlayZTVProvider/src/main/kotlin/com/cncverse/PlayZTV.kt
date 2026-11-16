@@ -30,12 +30,10 @@ class HeaderReplacementInterceptor(private val customHeaders: Map<String, String
         val originalRequest = chain.request()
         val requestBuilder = originalRequest.newBuilder()
 
-        // Remove existing headers that we want to replace
         customHeaders.keys.forEach { headerName ->
             requestBuilder.removeHeader(headerName)
         }
 
-        // Add our custom headers
         customHeaders.forEach { (name, value) ->
             requestBuilder.addHeader(name, value)
         }
@@ -45,20 +43,23 @@ class HeaderReplacementInterceptor(private val customHeaders: Map<String, String
 }
 
 class LoggingInterceptor : Interceptor {
-  override fun intercept(chain: Interceptor.Chain): Response {
-    val req = chain.request()
-
-    val bodyCopy = req.body
-    val buffer = okio.Buffer()
-    bodyCopy?.writeTo(buffer)
-    val bodyString = buffer.readUtf8()
-    return chain.proceed(req)
-  }
+    override fun intercept(chain: Interceptor.Chain): Response {
+        val req = chain.request()
+        val bodyCopy = req.body
+        val buffer = okio.Buffer()
+        bodyCopy?.writeTo(buffer)
+        val bodyString = buffer.readUtf8()
+        return chain.proceed(req)
+    }
 }
+
+private val M3U_EXTINF_PREFIX_RX = Regex("(#EXTINF:.?[0-9]+)", RegexOption.IGNORE_CASE)
+private val M3U_ATTRIBUTE_RX = Regex("""(\w[-\w]*)\s*=\s*(?:"([^"]*)"|([^\s,]+))""", RegexOption.IGNORE_CASE)
 
 class PlayZTV(
     private val customName: String = "IPTV Player",
-    private val customMainUrl: String = "https://fifabd.site/OPLLX7/LIVE2.m3u"
+    private val customMainUrl: String = "https://fifabd.site/OPLLX7/LIVE2.m3u",
+    private val xorKey: String = ""
 ) : MainAPI() {
     companion object {
         var context: android.content.Context? = null
@@ -66,20 +67,19 @@ class PlayZTV(
         const val EXT_INF = "#EXTINF"
         const val EXT_VLC_OPT = "#EXTVLCOPT"
     }
-    
+
     override var lang = "ta"
     override var mainUrl = customMainUrl
     override var name = customName
     override val hasMainPage = true
     override val hasChromecastSupport = true
-    override val supportedTypes = setOf(
-        TvType.Live,
-    )
-    private val headers = mapOf(
-        "accept" to "*/*",
-        "Cache-Control" to "no-cache, no-store",
-        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; rv:78.0) Gecko/20100101 Firefox/78.0",
-    )
+    override val supportedTypes = setOf(TvType.Live)
+
+    private val headers: Map<String, String>
+        get() = mapOf(
+            "User-Agent" to "okhttp/4.12.0",
+            "X-If-Modified" to (System.currentTimeMillis() / 1000).toString(),
+        )
 
     private val customHttpClient by lazy {
         OkHttpClient.Builder()
@@ -88,22 +88,18 @@ class PlayZTV(
     }
 
     private suspend fun getWithCustomHeaders(url: String): String {
-        var finalUrl = url
-        var hasCustomHeaders = false
         val dynamicHeaders = headers.toMutableMap()
-
+        var hasCustomHeaders = false
+        var finalUrl = url
         if (url.contains("|")) {
             val parts = url.split("|", limit = 2)
             finalUrl = parts[0]
-            val headersPart = parts[1]
-            val headerPairs = headersPart.split("&")
-            for (pair in headerPairs) {
+            for (pair in parts[1].split("&")) {
                 val kv = pair.split("=", limit = 2)
                 if (kv.size != 2) continue
                 val key = kv[0].trim()
                 val value = kv[1].trim()
-                val existingKey = dynamicHeaders.keys.firstOrNull { it.equals(key, ignoreCase = true) }
-                if (existingKey != null) dynamicHeaders.remove(existingKey)
+                dynamicHeaders.keys.firstOrNull { it.equals(key, ignoreCase = true) }?.let { dynamicHeaders.remove(it) }
                 dynamicHeaders[key] = value
                 hasCustomHeaders = true
             }
@@ -126,125 +122,121 @@ class PlayZTV(
         }
     }
 
-private fun String.base64ToHexOrNull(): String? {
-    val raw = trim()
-    val normalizedHex = raw.replace("-", "")
-    if (normalizedHex.isNotEmpty() && normalizedHex.length % 2 == 0 && normalizedHex.matches(Regex("^[0-9a-fA-F]+$"))) {
-        return normalizedHex.lowercase()
-    }
+    private fun String.base64ToHexOrNull(): String? {
+        val raw = trim()
+        val normalizedHex = raw.replace("-", "")
+        if (normalizedHex.isNotEmpty() && normalizedHex.length % 2 == 0 && normalizedHex.matches(Regex("^[0-9a-fA-F]+$"))) {
+            return normalizedHex.lowercase()
+        }
 
-    return try {
-        val normalized = raw
-            .replace('-', '+')
-            .replace('_', '/')
-            .let { value ->
-                val padding = (4 - (value.length % 4)) % 4
-                value + "=".repeat(padding)
-            }
-        val decoded = Base64.decode(normalized, Base64.DEFAULT)
-        decoded.joinToString(separator = "") { byte -> "%02x".format(byte) }
-    } catch (_: Exception) {
-        null
-    }
-}
-
-private fun String.hexToBase64UrlOrNull(): String? {
-    val normalizedHex = trim().replace("-", "")
-    if (normalizedHex.isEmpty() || normalizedHex.length % 2 != 0 || !normalizedHex.matches(Regex("^[0-9a-fA-F]+$"))) {
-        return null
-    }
-
-    return try {
-        val bytes = normalizedHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
-        Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
-    } catch (_: Exception) {
-        null
-    }
-}
-
-    private fun decryptContent(content: String): String {
         return try {
-            // Check if content is already valid M3U
-            if (content.startsWith("#EXTM3U") || content.startsWith("#EXTINF") || content.startsWith("#KODIPROP")) {
-                return content
-            }
-
-            val trimmedContent = content.trim()
-            
-            // Try to decrypt encrypted content
-            if (trimmedContent.length < 79) {
-                return trimmedContent // Too short to be encrypted, return as-is
-            }
-
-            // Extract parts for decryption
-            val part1 = trimmedContent.substring(0, 10)
-            val part2 = trimmedContent.substring(34, trimmedContent.length - 54)
-            val part3 = trimmedContent.substring(trimmedContent.length - 10)
-            val encryptedData = part1 + part2 + part3
-
-            val ivBase64 = trimmedContent.substring(10, 34)
-            val keyBase64 = trimmedContent.substring(trimmedContent.length - 54, trimmedContent.length - 10)
-
-            // Decode from Base64
-            val iv = Base64.decode(ivBase64, Base64.DEFAULT)
-            val key = Base64.decode(keyBase64, Base64.DEFAULT)
-            val encrypted = Base64.decode(encryptedData, Base64.DEFAULT)
-
-            // Decrypt using AES/CBC/PKCS5Padding
-            val cipher = Cipher.getInstance("AES/CBC/PKCS5PADDING")
-            val secretKey = SecretKeySpec(key, "AES")
-            val ivSpec = IvParameterSpec(iv)
-            cipher.init(Cipher.DECRYPT_MODE, secretKey, ivSpec)
-            val decrypted = cipher.doFinal(encrypted)
-
-            val decryptedText = String(decrypted, StandardCharsets.UTF_8)
-            // Upstream converts encrypted JSON channel payloads into a clean M3U
-            // playlist so the parser below can consume them uniformly.
-            channelPayloadToM3U(decryptedText) ?: decryptedText
-        } catch (e: Exception) {
-            content // Return original content if decryption fails
+            val normalized = raw
+                .replace('-', '+')
+                .replace('_', '/')
+                .let { value ->
+                    val padding = (4 - (value.length % 4)) % 4
+                    value + "=".repeat(padding)
+                }
+            val decoded = Base64.decode(normalized, Base64.DEFAULT)
+            decoded.joinToString(separator = "") { byte -> "%02x".format(byte) }
+        } catch (_: Exception) {
+            null
         }
     }
 
-    /**
-     * Ported from upstream `PlayZTV.decryptContent`: the custom playlist endpoint
-     * may return a JSON array of `{"channel": "<json>"}` wrappers instead of an
-     * M3U file. Convert those channels into an `#EXTM3U` playlist.
-     */
+    private fun String.hexToBase64UrlOrNull(): String? {
+        val normalizedHex = trim().replace("-", "")
+        if (normalizedHex.isEmpty() || normalizedHex.length % 2 != 0 || !normalizedHex.matches(Regex("^[0-9a-fA-F]+$"))) {
+            return null
+        }
+
+        return try {
+            val bytes = normalizedHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+            Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun decryptContent(content: String): String {
+        return try {
+            var trimmedContent = content.trim()
+            val m3uStart = trimmedContent.indexOf(EXT_M3U)
+            if (m3uStart > 0) trimmedContent = trimmedContent.substring(m3uStart)
+            if (trimmedContent.startsWith(EXT_M3U) || trimmedContent.startsWith(EXT_INF) || trimmedContent.startsWith("#KODIPROP")) {
+                return trimmedContent
+            }
+
+            PlayZTVCryptoUtils.decryptWithCategoryKey(trimmedContent, xorKey)?.let { return it }
+
+            val playzDecrypted = PlayZTVCryptoUtils.decryptPlayZTV(trimmedContent)
+            if (playzDecrypted.isNullOrBlank()) {
+                if (trimmedContent.length < 79) {
+                    return trimmedContent
+                }
+
+                val part1 = trimmedContent.substring(0, 10)
+                val part2 = trimmedContent.substring(34, trimmedContent.length - 54)
+                val part3 = trimmedContent.substring(trimmedContent.length - 10)
+                val encryptedData = part1 + part2 + part3
+
+                val ivBase64 = trimmedContent.substring(10, 34)
+                val keyBase64 = trimmedContent.substring(trimmedContent.length - 54, trimmedContent.length - 10)
+
+                val iv = Base64.decode(ivBase64, Base64.DEFAULT)
+                val key = Base64.decode(keyBase64, Base64.DEFAULT)
+                val encrypted = Base64.decode(encryptedData, Base64.DEFAULT)
+
+                val cipher = Cipher.getInstance("AES/CBC/PKCS5PADDING")
+                cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(iv))
+                return String(cipher.doFinal(encrypted), StandardCharsets.UTF_8)
+            }
+
+            val isM3u = playzDecrypted.startsWith(EXT_M3U) || playzDecrypted.startsWith(EXT_INF) || playzDecrypted.startsWith("#KODIPROP")
+            if (!isM3u && playzDecrypted.startsWith("[")) {
+                try {
+                    channelPayloadToM3U(playzDecrypted)?.let { return it }
+                } catch (_: Exception) {
+                }
+            }
+            playzDecrypted
+        } catch (e: Exception) {
+            content
+        }
+    }
+
+    // Custom category endpoints return a JSON array of {"channel": "<json>"} wrappers instead of M3U.
     private fun channelPayloadToM3U(decrypted: String): String? {
-        val wrappers = runCatching {
-            parseJson<List<PlayZTVChannelWrapper>>(decrypted)
-        }.getOrNull() ?: return null
-
-        val validChannels = wrappers.mapNotNull { wrapper ->
-            runCatching { parseJson<PlayZTVChannelData>(wrapper.channel) }.getOrNull()
-        }.filter { !it.links.isNullOrBlank() }
-
+        val channelWrappers = parseJson<List<PlayZTVChannelWrapper>>(decrypted)
+        val validChannels = channelWrappers.mapNotNull { cw ->
+            try { parseJson<PlayZTVChannelData>(cw.channel) } catch (_: Exception) { null }
+        }.filter { it.visible != false && !it.links.isNullOrBlank() }
         if (validChannels.isEmpty()) return null
 
         val sb = StringBuilder("#EXTM3U\n")
-        for (channel in validChannels) {
-            val name = channel.name?.trim()?.ifBlank { "Channel" } ?: "Channel"
-            val logo = channel.logo ?: ""
-            val links = channel.links?.split(",") ?: emptyList()
-            val linkNames = channel.link_names
-
-            links.forEachIndexed { idx, rawLink ->
-                val link = rawLink.trim()
-                if (link.isEmpty()) return@forEachIndexed
-                val title = if (links.size <= 1) {
-                    linkNames?.getOrNull(idx)?.trim()?.takeIf { it.isNotEmpty() } ?: name
-                } else {
+        for (ch in validChannels) {
+            val name = ch.name?.trim() ?: "Channel"
+            val logo = ch.logo ?: ""
+            val links = ch.links?.split(",") ?: listOf(ch.links ?: "")
+            val linkNames = ch.link_names
+            links.forEachIndexed { idx, link ->
+                val l = link.trim()
+                if (l.isEmpty()) return@forEachIndexed
+                val title = if (links.size <= 1 && linkNames?.getOrNull(idx) != null) {
+                    linkNames[idx].trim()
+                } else if (links.size > 1) {
                     "$name (${idx + 1})"
+                } else {
+                    name
                 }
-                sb.append("#EXTINF:-1 tvg-logo=\"$logo\" group-title=\"Live\",$title\n")
-                sb.append(link).append("\n")
+                sb.append("#EXTINF:-1 tvg-logo=\"$logo\" group-title=\"Live\",$title").append("\n")
+                sb.append(l).append("\n")
             }
         }
         return sb.toString()
     }
 
-  private fun getMpdStream(url: String, customHeaders: Map<String, String>): String {
+    private fun getMpdStream(url: String, customHeaders: Map<String, String>): String {
         val client = OkHttpClient.Builder()
             .addInterceptor(HeaderReplacementInterceptor(customHeaders))
             .build()
@@ -254,23 +246,50 @@ private fun String.hexToBase64UrlOrNull(): String? {
             .build()
 
         return client.newCall(request).execute().use { response ->
-          response.body.string()
+            response.body.string()
         }
     }
 
-  private fun getDRMKeysFromLicenseServer(url: String, kid: String): String {
-      val userAgent = "Dalvik/2.1.0 (Linux; U; Android)"
+    private fun getBaseUrl(url: String): String {
+        val withoutQuery = url.substringBefore("?")
+        val lastSlash = withoutQuery.lastIndexOf('/')
+        return if (lastSlash <= 8) "$url/" else withoutQuery.substring(0, lastSlash + 1)
+    }
+
+    private fun fetchM3U8Variants(url: String, callerBase: String, headers: Map<String, String>): List<Pair<String, Int>> {
+        return try {
+            val playlist = getMpdStream(url, headers)
+            if (!playlist.contains("#EXT-X-STREAM-INF")) return emptyList()
+            val variants = mutableListOf<Pair<String, Int>>()
+            var qualityPx = 0
+            for (rawLine in playlist.lines()) {
+                val line = rawLine.trim()
+                if (line.startsWith("#EXT-X-STREAM-INF:")) {
+                    qualityPx = Regex("""RESOLUTION=\d+x(\d+)""").find(line)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                } else if (line.isNotEmpty() && !line.startsWith("#")) {
+                    val streamUrl = if (line.startsWith("http://") || line.startsWith("https://")) line else callerBase + line
+                    variants.add(streamUrl to qualityPx)
+                    qualityPx = 0
+                }
+            }
+            variants
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun getDRMKeysFromLicenseServer(url: String, kid: String): String {
+        val userAgent = "Dalvik/2.1.0 (Linux; U; Android)"
         val client = OkHttpClient.Builder()
             .addInterceptor(HeaderReplacementInterceptor(
-              mapOf(
-                "User-Agent" to userAgent,
-                "Content-Type" to "application/json;charset=UTF-8",
-              )
+                mapOf(
+                    "User-Agent" to userAgent,
+                    "Content-Type" to "application/json;charset=UTF-8",
+                )
             ))
             .addInterceptor(LoggingInterceptor())
             .build()
 
-        // Prepare the request body with the KID
         val json = "{\"kids\":[\"$kid\"],\"type\":\"temporary\"}"
         val mediaType = "application/json; charset=utf-8".toMediaType()
         val body = json.toRequestBody(mediaType)
@@ -281,59 +300,26 @@ private fun String.hexToBase64UrlOrNull(): String? {
             .build()
 
         return client.newCall(request).execute().use { response ->
-          // Parse the response to extract the DRM key
-          val response = response.body.string()
-          val jsonResponse = parseJson<Map<String, Any>>(response)
-          @Suppress("UNCHECKED_CAST")
-          val keys = jsonResponse["keys"] as? List<Map<String, String>> ?: return ""
-          val firstKey = keys.firstOrNull() ?: return ""
-          firstKey["k"] ?: ""
+            val responseBody = response.body.string()
+            val jsonResponse = parseJson<Map<String, Any>>(responseBody)
+            @Suppress("UNCHECKED_CAST")
+            val keys = jsonResponse["keys"] as? List<Map<String, String>> ?: return ""
+            val matchedKey = keys.firstOrNull { it["kid"] == kid } ?: keys.firstOrNull() ?: return ""
+            matchedKey["k"] ?: ""
         }
     }
 
     override suspend fun getMainPage(
         page: Int,
-        request : MainPageRequest
+        request: MainPageRequest
     ): HomePageResponse {
-
-
-        
+        PlayZTVProviderManager.refreshFromFirebase()
         val rawContent = getWithCustomHeaders(mainUrl)
         val decryptedContent = decryptContent(rawContent)
         val data = IptvPlaylistParser().parseM3U(decryptedContent)
-        return newHomePageResponse(data.items.groupBy{it.attributes["group-title"]}.map { group ->
+        return newHomePageResponse(data.items.groupBy { it.attributes["group-title"] }.map { group ->
             val title = group.key ?: ""
             val show = group.value.map { channel ->
-                val streamurl = channel.url.toString()
-                val channelname = channel.title.toString()
-                val posterurl = channel.attributes["tvg-logo"].toString()
-                val nation = channel.attributes["group-title"].toString()
-                val key= channel.key ?: ""
-                val keyid= channel.keyid ?: ""
-                val userAgent = channel.userAgent ?: ""
-                val cookie = channel.cookie ?: ""
-                val licenseUrl = channel.licenseUrl ?: ""
-                val headers = channel.headers
-                newLiveSearchResponse(channelname, LoadData(streamurl, channelname, posterurl, nation, key, keyid, userAgent, cookie, licenseUrl, channel.drmKeys, headers).toJson(), TvType.Live)
-                {
-                    this.posterUrl=posterurl
-                    this.apiName
-                    this.lang=channel.attributes["group-title"]
-                }
-            }
-            HomePageList(
-                title,
-                show,
-                isHorizontalImages = true
-            )
-        },false)
-    }
-
-    override suspend fun search(query: String): List<SearchResponse> {
-        val rawContent = getWithCustomHeaders(mainUrl)
-        val decryptedContent = decryptContent(rawContent)
-        val data = IptvPlaylistParser().parseM3U(decryptedContent)
-        return data.items.filter { it.title?.contains(query,ignoreCase = true) ?: false }.map { channel ->
                 val streamurl = channel.url.toString()
                 val channelname = channel.title.toString()
                 val posterurl = channel.attributes["tvg-logo"].toString()
@@ -343,23 +329,59 @@ private fun String.hexToBase64UrlOrNull(): String? {
                 val userAgent = channel.userAgent ?: ""
                 val cookie = channel.cookie ?: ""
                 val licenseUrl = channel.licenseUrl ?: ""
-            newLiveSearchResponse(channelname, LoadData(streamurl, channelname, posterurl, nation, key, keyid, userAgent, cookie, licenseUrl, channel.drmKeys, headers).toJson(), TvType.Live)
-            {
-                this.posterUrl=posterurl
+                val headers = channel.headers
+                newLiveSearchResponse(
+                    channelname,
+                    LoadData(streamurl, channelname, posterurl, nation, key, keyid, userAgent, cookie, licenseUrl, channel.drmKeys, headers).toJson(),
+                    TvType.Live
+                ) {
+                    this.posterUrl = posterurl
+                    this.apiName
+                    this.lang = channel.attributes["group-title"]
+                }
+            }
+            HomePageList(
+                title,
+                show,
+                isHorizontalImages = true
+            )
+        }, false)
+    }
+
+    override suspend fun search(query: String): List<SearchResponse> {
+        val rawContent = getWithCustomHeaders(mainUrl)
+        val decryptedContent = decryptContent(rawContent)
+        val data = IptvPlaylistParser().parseM3U(decryptedContent)
+        return data.items.filter { it.title?.contains(query, ignoreCase = true) ?: false }.map { channel ->
+            val streamurl = channel.url.toString()
+            val channelname = channel.title.toString()
+            val posterurl = channel.attributes["tvg-logo"].toString()
+            val nation = channel.attributes["group-title"].toString()
+            val key = channel.key ?: ""
+            val keyid = channel.keyid ?: ""
+            val userAgent = channel.userAgent ?: ""
+            val cookie = channel.cookie ?: ""
+            val licenseUrl = channel.licenseUrl ?: ""
+            newLiveSearchResponse(
+                channelname,
+                LoadData(streamurl, channelname, posterurl, nation, key, keyid, userAgent, cookie, licenseUrl, channel.drmKeys, headers).toJson(),
+                TvType.Live
+            ) {
+                this.posterUrl = posterurl
                 this.apiName
-                this.lang=channel.attributes["group-title"]
+                this.lang = channel.attributes["group-title"]
             }
         }
     }
 
     override suspend fun load(url: String): LoadResponse {
         val data = parseJson<LoadData>(url)
-        return newLiveStreamLoadResponse(data.title,url,url)
-        {
-            this.posterUrl=data.poster
-            this.plot=data.nation
+        return newLiveStreamLoadResponse(data.title, url, url) {
+            this.posterUrl = data.poster
+            this.plot = data.nation
         }
     }
+
     data class LoadData(
         val url: String,
         val title: String,
@@ -373,6 +395,7 @@ private fun String.hexToBase64UrlOrNull(): String? {
         val drmKeys: Map<String, String> = emptyMap(),
         val headers: Map<String, String>,
     )
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -380,8 +403,7 @@ private fun String.hexToBase64UrlOrNull(): String? {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val loadData = parseJson<LoadData>(data)
-        if (loadData.url.contains("mpd"))
-        {
+        if (loadData.url.contains("mpd")) {
             val headers = mutableMapOf<String, String>()
             headers.putAll(loadData.headers)
             if (loadData.userAgent.isNotEmpty()) {
@@ -392,7 +414,7 @@ private fun String.hexToBase64UrlOrNull(): String? {
             }
 
             val hasValidKeys = loadData.key.isNotEmpty() && loadData.keyid.isNotEmpty() &&
-                              loadData.key.trim() != "null" && loadData.keyid.trim() != "null"
+                    loadData.key.trim() != "null" && loadData.keyid.trim() != "null"
             val hasLicenseUrl = loadData.licenseUrl.isNotEmpty() && loadData.licenseUrl.trim() != "null"
 
             if (hasValidKeys) {
@@ -431,76 +453,69 @@ private fun String.hexToBase64UrlOrNull(): String? {
                         loadData.url,
                         INFER_TYPE,
                         CLEARKEY_UUID
-                    )
-                    {
-                        this.quality=Qualities.Unknown.value
+                    ) {
+                        this.quality = Qualities.Unknown.value
                         if (headers.isNotEmpty()) {
                             this.headers = headers
                         }
-                        this.key=playerKey
-                        this.kid=playerKid
+                        this.key = playerKey
+                        this.kid = playerKid
                     }
                 )
             } else if (hasLicenseUrl) {
-              // Get DRM KID from MPD Stream
-              val mpdStr = getMpdStream(
-                url = loadData.url,
-                customHeaders = headers
-              )
-              val regex = Regex("""cenc:default_KID=["']([0-9a-fA-F\-]{36})["']""")
-              val matchResult = regex.find(mpdStr)
-              val drmKid = matchResult?.groups?.get(1)?.value ?: UUID.randomUUID().toString()
-
-              // DRM KID is in Hex format with dashes, need to convert to Base64
-              val drmKidBytes = drmKid.replace("-", "").chunked(2)
-                .map { it.toInt(16).toByte() }
-                .toByteArray()
-              val drmKidBase64 = Base64.encodeToString(drmKidBytes, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
-
-              // Get DRM Key from License Server
-              val keyBase64 = getDRMKeysFromLicenseServer(
-                url = loadData.licenseUrl,
-                kid = drmKidBase64
-              )
-              if (keyBase64.isNotEmpty()) {
-                callback.invoke(
-                  newDrmExtractorLink(
-                    this.name,
-                    this.name,
-                    loadData.url,
-                    INFER_TYPE,
-                    CLEARKEY_UUID
-                  )
-                  {
-                    this.quality=Qualities.Unknown.value
-                    if (headers.isNotEmpty()) {
-                      this.headers = headers
-                    }
-                    this.key=keyBase64.trim()
-                    this.kid=drmKidBase64.trim()
-                  }
+                val mpdStr = getMpdStream(
+                    url = loadData.url,
+                    customHeaders = headers
                 )
-                return true
-              }
+                val regex = Regex("""cenc:default_KID=["']([0-9a-fA-F\-]{36})["']""")
+                val matchResult = regex.find(mpdStr)
+                val drmKid = matchResult?.groups?.get(1)?.value ?: UUID.randomUUID().toString()
 
-              callback.invoke(
-                newDrmExtractorLink(
-                  this.name,
-                  this.name,
-                  loadData.url,
-                  INFER_TYPE,
-                  CLEARKEY_UUID
+                val drmKidBytes = drmKid.replace("-", "").chunked(2)
+                    .map { it.toInt(16).toByte() }
+                    .toByteArray()
+                val drmKidBase64 = Base64.encodeToString(drmKidBytes, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+
+                val keyBase64 = getDRMKeysFromLicenseServer(
+                    url = loadData.licenseUrl,
+                    kid = drmKidBase64
                 )
-                {
-                  this.quality=Qualities.Unknown.value
-                  if (headers.isNotEmpty()) {
-                    this.headers = headers
-                  }
-                  this.licenseUrl=loadData.licenseUrl.trim()
+                if (keyBase64.isNotEmpty()) {
+                    callback.invoke(
+                        newDrmExtractorLink(
+                            this.name,
+                            this.name,
+                            loadData.url,
+                            INFER_TYPE,
+                            CLEARKEY_UUID
+                        ) {
+                            this.quality = Qualities.Unknown.value
+                            if (headers.isNotEmpty()) {
+                                this.headers = headers
+                            }
+                            this.key = keyBase64.trim()
+                            this.kid = drmKidBase64.trim()
+                        }
+                    )
+                    return true
                 }
-            )
-        } else {
-                // Fallback to regular MPD link if no DRM keys available
+
+                callback.invoke(
+                    newDrmExtractorLink(
+                        this.name,
+                        this.name,
+                        loadData.url,
+                        INFER_TYPE,
+                        CLEARKEY_UUID
+                    ) {
+                        this.quality = Qualities.Unknown.value
+                        if (headers.isNotEmpty()) {
+                            this.headers = headers
+                        }
+                        this.licenseUrl = loadData.licenseUrl.trim()
+                    }
+                )
+            } else {
                 callback.invoke(
                     newExtractorLink(
                         this.name,
@@ -516,56 +531,7 @@ private fun String.hexToBase64UrlOrNull(): String? {
                     }
                 )
             }
-        }
-        else if(loadData.url.contains("&e=.m3u"))
-            {
-                val headers = mutableMapOf<String, String>()
-                headers.putAll(loadData.headers)
-                if (loadData.userAgent.isNotEmpty()) {
-                    headers["User-Agent"] = loadData.userAgent
-                }
-                if (loadData.cookie.isNotEmpty()) {
-                    headers["Cookie"] = loadData.cookie
-                }
-                callback.invoke(
-                    newExtractorLink(
-                        this.name,
-                        this.name,
-                        url = loadData.url,
-                        ExtractorLinkType.M3U8
-                    ) {
-                        this.referer = ""
-                        this.quality = Qualities.Unknown.value
-                        if (headers.isNotEmpty()) {
-                            this.headers = headers
-                        }
-                    }
-                )
-
-            }
-        else if(loadData.url.contains("play.php?"))
-            {
-                val headers = mutableMapOf("User-Agent" to loadData.userAgent)
-                headers.putAll(loadData.headers)
-                if (loadData.cookie.isNotEmpty()) {
-                    headers["Cookie"] = loadData.cookie
-                }
-                callback.invoke(
-                    newExtractorLink(
-                        this.name,
-                        this.name,
-                        url = loadData.url,
-                        ExtractorLinkType.M3U8
-                    ) {
-                        this.referer = ""
-                        this.quality = Qualities.Unknown.value
-                        this.headers = headers
-                    }
-                )
-
-            }
-        else
-        {
+        } else if (loadData.url.contains("&e=.m3u")) {
             val headers = mutableMapOf<String, String>()
             headers.putAll(loadData.headers)
             if (loadData.userAgent.isNotEmpty()) {
@@ -577,9 +543,9 @@ private fun String.hexToBase64UrlOrNull(): String? {
             callback.invoke(
                 newExtractorLink(
                     this.name,
-                    loadData.title,
+                    this.name,
                     url = loadData.url,
-                    INFER_TYPE
+                    ExtractorLinkType.M3U8
                 ) {
                     this.referer = ""
                     this.quality = Qualities.Unknown.value
@@ -588,12 +554,70 @@ private fun String.hexToBase64UrlOrNull(): String? {
                     }
                 }
             )
-
+        } else if (loadData.url.contains("play.php?")) {
+            val headers = mutableMapOf("User-Agent" to loadData.userAgent)
+            headers.putAll(loadData.headers)
+            if (loadData.cookie.isNotEmpty()) {
+                headers["Cookie"] = loadData.cookie
+            }
+            callback.invoke(
+                newExtractorLink(
+                    this.name,
+                    this.name,
+                    url = loadData.url,
+                    ExtractorLinkType.M3U8
+                ) {
+                    this.referer = ""
+                    this.quality = Qualities.Unknown.value
+                    this.headers = headers
+                }
+            )
+        } else {
+            val headers = mutableMapOf<String, String>()
+            headers.putAll(loadData.headers)
+            if (loadData.userAgent.isNotEmpty()) {
+                headers["User-Agent"] = loadData.userAgent
+            }
+            if (loadData.cookie.isNotEmpty()) {
+                headers["Cookie"] = loadData.cookie
+            }
+            val callerBase = getBaseUrl(loadData.url)
+            val variants = fetchM3U8Variants(loadData.url, callerBase, headers)
+            if (variants.isNotEmpty()) {
+                variants.forEach { (streamUrl, qualityPx) ->
+                    callback.invoke(
+                        newExtractorLink(
+                            this.name,
+                            loadData.title,
+                            url = streamUrl,
+                            ExtractorLinkType.M3U8
+                        ) {
+                            this.referer = ""
+                            this.quality = qualityPx
+                            this.headers = headers
+                        }
+                    )
+                }
+            } else {
+                callback.invoke(
+                    newExtractorLink(
+                        this.name,
+                        loadData.title,
+                        url = loadData.url,
+                        INFER_TYPE
+                    ) {
+                        this.referer = ""
+                        this.quality = Qualities.Unknown.value
+                        if (headers.isNotEmpty()) {
+                            this.headers = headers
+                        }
+                    }
+                )
+            }
         }
         return true
     }
 }
-
 
 data class Playlist(
     val items: List<PlaylistItem> = emptyList(),
@@ -611,7 +635,6 @@ data class PlaylistItem(
     val licenseUrl: String? = null,
     val drmKeys: Map<String, String> = emptyMap(),
 )
-
 
 class IptvPlaylistParser {
 
@@ -712,30 +735,16 @@ class IptvPlaylistParser {
         return key to keyId
     }
 
-
-    /**
-     * Parse M3U8 string into [Playlist]
-     *
-     * @param content M3U8 content string.
-     * @throws PlaylistParserException if an error occurs.
-     */
     fun parseM3U(content: String): Playlist {
         return parseM3U(content.byteInputStream())
     }
 
-    /**
-     * Parse M3U8 content [InputStream] into [Playlist]
-     *
-     * @param input Stream of input data.
-     * @throws PlaylistParserException if an error occurs.
-     */
     @Throws(PlaylistParserException::class)
     fun parseM3U(input: InputStream): Playlist {
         val allLines = input.bufferedReader().readLines()
         val playlistItems: MutableList<PlaylistItem> = mutableListOf()
         var i = 0
 
-        // Buffer for all properties - accumulate until URL line is found
         var bufferedCookie: String? = null
         var bufferedUserAgent: String? = null
         var bufferedHeaders: Map<String, String> = emptyMap()
@@ -746,7 +755,6 @@ class IptvPlaylistParser {
         var bufferedTitle: String? = null
         var bufferedAttributes: Map<String, String> = emptyMap()
 
-
         while (i < allLines.size) {
             val line = allLines[i].trim()
 
@@ -756,49 +764,44 @@ class IptvPlaylistParser {
                         bufferedTitle = line.getTitle()
                         bufferedAttributes = line.getAttributes()
 
-                        // Extract DRM keys from attributes if present
                         val keyFromAttr = bufferedAttributes["key"] ?: bufferedAttributes["drm-key"]
                         val keyidFromAttr = bufferedAttributes["keyid"] ?: bufferedAttributes["drm-keyid"] ?: bufferedAttributes["kid"]
-                        
-                        // Only use attribute keys if no buffered keys exist
+
                         if (bufferedKey == null) bufferedKey = keyFromAttr
                         if (bufferedKeyId == null) bufferedKeyId = keyidFromAttr
                     }
                     line.startsWith("#EXTHTTP:") -> {
-                        // Parse JSON for cookie and user-agent, buffer them
                         val json = line.removePrefix("#EXTHTTP:").trim()
                         try {
-                            val map = parseJson<Map<String, String>>(json)
-                            if (map.containsKey("cookie")) {
-                                bufferedCookie = map["cookie"]
+                            val map = parseJson<Map<String, String>>(json).mapKeys { it.key.lowercase() }
+                            map["cookie"]?.let { bufferedCookie = it }
+                            map["user-agent"]?.let { bufferedUserAgent = it }
+                            (map["referer"] ?: map["referrer"])?.let {
+                                bufferedHeaders = bufferedHeaders + ("Referer" to it)
                             }
-                            if (map.containsKey("user-agent")) {
-                                bufferedUserAgent = map["user-agent"]
+                            map["origin"]?.let {
+                                bufferedHeaders = bufferedHeaders + ("Origin" to it)
                             }
                         } catch (e: Exception) {
-                            // Ignore parsing errors
                         }
                     }
                     line.startsWith(PlayZTV.EXT_VLC_OPT) -> {
-                        // Buffer user agent and referrer
                         val userAgent = line.getTagValue("http-user-agent")
                         val referrer = line.getTagValue("http-referrer") ?: line.getTagValue("http-referer")
 
                         if (userAgent != null) bufferedUserAgent = userAgent
+                        line.getTagValue("http-cookie")?.let { bufferedCookie = it }
                         if (referrer != null) {
                             bufferedHeaders = bufferedHeaders + mapOf("Referer" to referrer)
                         }
                     }
                     line.startsWith("#KODIPROP:inputstream.adaptive.license_key=") -> {
-                        // Parse keyid and key from license_key and buffer them
                         val licenseKey = line.removePrefix("#KODIPROP:inputstream.adaptive.license_key=").trim()
 
-                        // Check if license key is a URL
                         if (licenseKey.startsWith("http://") || licenseKey.startsWith("https://")) {
                             bufferedLicenseUrl = licenseKey
                         } else {
                             if (licenseKey.startsWith("{")) {
-                                // Updated JSON logic: preserve all KID->KEY pairs and use first as fallback.
                                 val parsedKeys = parseLicenseKeysMap(licenseKey)
                                 if (parsedKeys.isNotEmpty()) {
                                     bufferedDrmKeys = parsedKeys
@@ -816,7 +819,6 @@ class IptvPlaylistParser {
                                     if (keyId != null) bufferedKeyId = keyId
                                 }
                             } else {
-                                // Legacy non-JSON logic: split keyid:key or keyid,key and decode hex -> base64url.
                                 val parts = when {
                                     licenseKey.contains(":") -> licenseKey.split(":")
                                     licenseKey.contains(",") -> licenseKey.split(",")
@@ -863,24 +865,18 @@ class IptvPlaylistParser {
                         }
                     }
                     !line.startsWith("#") -> {
-                        // URL line - now create the PlaylistItem with all buffered properties
-                        // Handle multi-line URLs by accumulating lines until we find a complete URL or hit a comment
                         var fullLine = line
                         var j = i + 1
 
-                        // Continue reading lines until we find a line that starts with # or we reach end of file
                         while (j < allLines.size &&
-                               !allLines[j].trim().startsWith("#") &&
-                               allLines[j].trim().isNotEmpty()) {
+                            !allLines[j].trim().startsWith("#") &&
+                            allLines[j].trim().isNotEmpty()) {
                             fullLine += allLines[j].trim()
                             j++
                         }
 
-
-                        // Update index to skip the lines we've already processed
                         i = j - 1
 
-                        // Parse URL and its pipe-separated parameters
                         val url = fullLine.getUrl()
                         val urlUserAgent = fullLine.getUrlParameter("user-agent")
                         val urlReferrer = fullLine.getUrlParameter("referer")
@@ -891,7 +887,6 @@ class IptvPlaylistParser {
                         val urlKeyid = fullLine.getUrlParameter("keyid")
                         val urlLicenseUrl = fullLine.getUrlParameter("licenseUrl")
 
-                        // Build final headers - URL params override buffered values
                         var finalHeaders = bufferedHeaders
                         val resolvedReferrer = urlReferrer ?: urlReferrerAlias
                         if (resolvedReferrer != null) {
@@ -901,7 +896,6 @@ class IptvPlaylistParser {
                             finalHeaders = finalHeaders + mapOf("Origin" to urlOrigin)
                         }
 
-                        // Create the PlaylistItem - URL params take priority over buffered values
                         val item = PlaylistItem(
                             title = bufferedTitle ?: "Unknown Channel",
                             attributes = bufferedAttributes,
@@ -917,7 +911,6 @@ class IptvPlaylistParser {
 
                         playlistItems.add(item)
 
-                        // Reset all buffers for next item
                         bufferedCookie = null
                         bufferedUserAgent = null
                         bufferedHeaders = emptyMap()
@@ -935,35 +928,16 @@ class IptvPlaylistParser {
         return Playlist(playlistItems)
     }
 
-    /**
-     * Replace "" (quotes) from given string.
-     */
     private fun String.replaceQuotesAndTrim(): String {
         return replace("\"", "").trim()
     }
 
-    /**
-     * Check if given content is valid M3U8 playlist.
-     */
     private fun String.isExtendedM3u(): Boolean =
         startsWith(PlayZTV.EXT_M3U) || startsWith(PlayZTV.EXT_INF) || startsWith("#KODIPROP")
 
-    /**
-     * Get title of media.
-     *
-     * Example:-
-     *
-     * Input:
-     * ```
-     * #EXTINF:-1 tvg-id="1234" group-title="Kids" tvg-logo="url/to/logo", Title
-     * ```
-     * Result: Title
-     */
     private fun String.getTitle(): String? {
-        val extInfRegex = Regex("(#EXTINF:.?[0-9]+)", RegexOption.IGNORE_CASE)
-        val afterExtInf = replace(extInfRegex, "").trim()
+        val afterExtInf = replace(M3U_EXTINF_PREFIX_RX, "").trim()
 
-        // Find the last comma that's not inside quotes
         var lastCommaIndex = -1
         var insideQuotes = false
 
@@ -977,59 +951,17 @@ class IptvPlaylistParser {
         return if (lastCommaIndex != -1 && lastCommaIndex < afterExtInf.length - 1) {
             afterExtInf.substring(lastCommaIndex + 1).trim().replaceQuotesAndTrim()
         } else {
-            // Fallback to original logic if no comma found
             afterExtInf.split(",").lastOrNull()?.replaceQuotesAndTrim()
         }
     }
 
-    /**
-     * Get media url.
-     *
-     * Example:-
-     *
-     * Input:
-     * ```
-     * https://example.com/sample.m3u8|user-agent="Custom"
-     * ```
-     * Result: https://example.com/sample.m3u8
-     */
     private fun String.getUrl(): String? {
         return split("|").firstOrNull()?.replaceQuotesAndTrim()
     }
 
-    /**
-     * Get url parameters.
-     *
-     * Example:-
-     *
-     * Input:
-     * ```
-     * http://192.54.104.122:8080/d/abcdef/video.mp4|User-Agent=Mozilla&Referer=CustomReferrer
-     * ```
-     * Result will be equivalent to kotlin map:
-     * ```Kotlin
-     * mapOf(
-     *   "User-Agent" to "Mozilla",
-     *   "Referer" to "CustomReferrer"
-     * )
-     * ```
-     */
-  /*  private fun String.getUrlParameters(): Map<String, String> {
-        val urlRegex = Regex("^(.*)\\|", RegexOption.IGNORE_CASE)
-        val headersString = replace(urlRegex, "").replaceQuotesAndTrim()
-        return headersString.split("&").mapNotNull {
-            val pair = it.split("=")
-            if (pair.size == 2) pair.first() to pair.last() else null
-        }.toMap()
-    }
-
-   */
-
     private fun String.getUrlParameter(key: String): String? {
-        val urlRegex = Regex("^(.*)\\|", RegexOption.IGNORE_CASE)
-        val paramsString = replace(urlRegex, "").replaceQuotesAndTrim()
+        val paramsString = (if (contains("|")) substringAfterLast("|") else this).replaceQuotesAndTrim()
 
-        // Split by & to get individual parameters
         val params = paramsString.split("&")
 
         for (param in params) {
@@ -1046,29 +978,9 @@ class IptvPlaylistParser {
         return null
     }
 
-    /**
-     * Get attributes from `#EXTINF` tag as Map<String, String>.
-     *
-     * Example:-
-     *
-     * Input:
-     * ```
-     * #EXTINF:-1 tvg-id="1234" group-title="Kids" tvg-logo="url/to/logo", Title
-     * ```
-     * Result will be equivalent to kotlin map:
-     * ```Kotlin
-     * mapOf(
-     *   "tvg-id" to "1234",
-     *   "group-title" to "Kids",
-     *   "tvg-logo" to "url/to/logo"
-     *)
-     * ```
-     */
     private fun String.getAttributes(): Map<String, String> {
-        val extInfRegex = Regex("(#EXTINF:.?[0-9]+)", RegexOption.IGNORE_CASE)
-        val afterExtInf = replace(extInfRegex, "").trim()
+        val afterExtInf = replace(M3U_EXTINF_PREFIX_RX, "").trim()
 
-        // Find the last comma that's not inside quotes to separate title from attributes
         var lastCommaIndex = -1
         var insideQuotes = false
 
@@ -1085,13 +997,9 @@ class IptvPlaylistParser {
             afterExtInf.trim()
         }
 
-
         val attributes = mutableMapOf<String, String>()
 
-        // Use regex to match key="value" or key=value patterns
-        val attributeRegex = Regex("""(\w[-\w]*)\s*=\s*(?:"([^"]*)"|([^\s,]+))""", RegexOption.IGNORE_CASE)
-
-        attributeRegex.findAll(attributesString).forEach { matchResult ->
+        M3U_ATTRIBUTE_RX.findAll(attributesString).forEach { matchResult ->
             val key = matchResult.groups[1]?.value ?: ""
             val quotedValue = matchResult.groups[2]?.value
             val unquotedValue = matchResult.groups[3]?.value
@@ -1105,33 +1013,13 @@ class IptvPlaylistParser {
         return attributes
     }
 
-    /**
-     * Get value from a tag.
-     *
-     * Example:-
-     *
-     * Input:
-     * ```
-     * #EXTVLCOPT:http-referrer=http://example.com/
-     * ```
-     * Result: http://example.com/
-     */
     private fun String.getTagValue(key: String): String? {
         val keyRegex = Regex("$key=(.*)", RegexOption.IGNORE_CASE)
         return keyRegex.find(this)?.groups?.get(1)?.value?.replaceQuotesAndTrim()
     }
-
 }
 
-/**
- * Exception thrown when an error occurs while parsing playlist.
- */
 sealed class PlaylistParserException(message: String) : Exception(message) {
-
-    /**
-     * Exception thrown if given file content is not valid.
-     */
     class InvalidHeader :
         PlaylistParserException("Invalid file header. Header doesn't start with #EXTM3U")
-
 }

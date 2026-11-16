@@ -51,7 +51,7 @@ class PlayZTVPlugin : Plugin() {
                 if (type == "custom") {
                     registerMainAPI(PlayZTVLiveEventsProvider(displayTitle, catLink))
                 } else {
-                    registerMainAPI(PlayZTV(displayTitle, catLink))
+                    registerMainAPI(PlayZTV(displayTitle, catLink, p["xorKey"] as? String ?: ""))
                 }
             }
 

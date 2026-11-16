@@ -4,8 +4,56 @@ import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
+
+private class ExpiringRemoteValue(
+    private val ttlMs: Long,
+    private val fallbackTtlMs: Long,
+    private val minRetryMs: Long
+) {
+    @Volatile private var value: String? = null
+    @Volatile private var expiresAt = 0L
+    @Volatile private var lastAttempt = 0L
+    private val mutex = Mutex()
+
+    suspend fun get(fetch: suspend () -> String?, fallback: suspend () -> String): String {
+        value?.let { if (System.currentTimeMillis() < expiresAt) return it }
+        return mutex.withLock {
+            val now = System.currentTimeMillis()
+            val current = value
+            if (current != null && (now < expiresAt || now - lastAttempt < minRetryMs)) {
+                return@withLock current
+            }
+            lastAttempt = now
+            val fresh = (try { fetch() } catch (e: Exception) { null })?.takeIf { it.isNotBlank() }
+            if (fresh != null) {
+                value = fresh
+                expiresAt = now + ttlMs
+                fresh
+            } else {
+                val resolved = current ?: fallback()
+                value = resolved
+                expiresAt = now + fallbackTtlMs
+                resolved
+            }
+        }
+    }
+
+    fun invalidate() {
+        expiresAt = 0L
+    }
+
+    fun reset() {
+        expiresAt = 0L
+        lastAttempt = 0L
+    }
+}
 
 // ── Data classes shared by provider/live-event layers ────────────────────────
 
@@ -25,7 +73,8 @@ data class PlayZTVCategoryData(
     val name: String,
     val logo: String?,
     val type: String?,
-    val api: String
+    val api: String,
+    val xorKey: String?
 )
 
 data class PlayZTVEventWrapper(
@@ -50,7 +99,7 @@ data class PlayZTVEventData(
     val priority: Int?
 )
 
-// ── Live event domain model (mirrored from SKTech) ────────────────────────────
+// ── Live event domain model ───────────────────────────────────────────────────
 
 data class PlayZLiveEventData(
     val id: Int,
@@ -82,22 +131,41 @@ data class PlayZLiveEventFormat(
     val webLink: String?
 )
 
+// ── Stream URL model returned by /channels/{slug}.txt ────────────────────────
+
+data class PlayZStreamUrl(
+    val name: String?,
+    val link: String?,
+    val scheme: Int?,
+    val api: String?,
+    val tokenApi: String?
+)
+
 // ── Manager singleton ─────────────────────────────────────────────────────────
 
 object PlayZTVProviderManager {
 
-    /** Hardcoded fallback base URLs from the PlayZTV plugin.js */
+    private const val USER_AGENT = "Dalvik/2.1.0 (Linux; U; Android 10; SM-A505F)"
+    private const val CONFIG_TTL_MS = 1800000L
+    private const val FALLBACK_TTL_MS = 120000L
+    private const val MIN_REFETCH_MS = 60000L
+
     private val DEFAULT_BASE_URLS = listOf(
+        "https://tourniquest.site",
         "https://adsflw.xyz",
         "https://playztv2828.store"
     )
 
-    private var cachedBaseUrl: String? = null
+    private val baseUrl = ExpiringRemoteValue(CONFIG_TTL_MS, FALLBACK_TTL_MS, MIN_REFETCH_MS)
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .build()
+
+    fun refreshFromFirebase() {
+        baseUrl.reset()
+    }
 
     // ── Internal helpers ──────────────────────────────────────────────────────
 
@@ -105,62 +173,136 @@ object PlayZTVProviderManager {
         if (date == null || time == null) return null
         return try {
             val parts = date.split("/")
-            if (parts.size == 3) {
-                val day = parts[0]; val month = parts[1]; val year = parts[2]
-                "$year/$month/$day $time +0000"
-            } else null
+            if (parts.size != 3) return null
+            val day = parts[0]; val month = parts[1]; val year = parts[2]
+            "$year/$month/$day $time +0000"
         } catch (_: Exception) { null }
     }
 
-    /** Returns an active base URL, trying Firebase first then defaults. */
-    private suspend fun getBaseUrl(): String {
-        cachedBaseUrl?.let { return it }
-
-        val firebaseUrl = PlayZTVFirebaseFetcher.getBaseApiUrl()
-        if (!firebaseUrl.isNullOrBlank()) {
-            cachedBaseUrl = firebaseUrl
-            return firebaseUrl
-        }
-
-        // Try each default URL until one responds
+    private fun firstReachableDefault(): String {
         for (url in DEFAULT_BASE_URLS) {
             try {
                 val req = Request.Builder()
                     .url("$url/categories.txt")
-                    .header("User-Agent", "Dalvik/2.1.0 (Linux; U; Android 10; SM-A505F)")
+                    .header("User-Agent", USER_AGENT)
                     .head()
                     .build()
-                val resp = client.newCall(req).execute()
-                if (resp.code < 500) {
-                    cachedBaseUrl = url
-                    return url
+                client.newCall(req).execute().use { resp ->
+                    if (resp.code < 500) return url
                 }
             } catch (_: Exception) { /* try next */ }
         }
-
-        cachedBaseUrl = DEFAULT_BASE_URLS.first()
-        return cachedBaseUrl!!
+        return DEFAULT_BASE_URLS.first()
     }
 
+    private suspend fun getBaseUrl(): String =
+        baseUrl.get({ PlayZTVFirebaseFetcher.getBaseApiUrl() }, { firstReachableDefault() })
+
     private suspend fun fetchDecrypted(path: String): String? = withContext(Dispatchers.IO) {
-        val baseUrl = getBaseUrl()
-        val url = "$baseUrl/$path"
-        return@withContext try {
+        val safePath = path.removePrefix("/")
+        val isAbsolute = safePath.startsWith("http://", true) || safePath.startsWith("https://", true)
+        val url = if (isAbsolute) safePath else "${getBaseUrl()}/$safePath"
+        try {
             val request = Request.Builder()
                 .url(url)
-                .header("User-Agent", "Dalvik/2.1.0 (Linux; U; Android 10; SM-A505F)")
+                .header("User-Agent", USER_AGENT)
                 .build()
             val response = client.newCall(request).execute()
-            if (response.isSuccessful) {
-                val body = response.body.string()
-                if (body.isNotBlank()) PlayZTVCryptoUtils.decryptPlayZTV(body.trim()) else null
-            } else {
-                println("PlayZTV: HTTP ${response.code} fetching $url")
-                null
+            response.use { resp ->
+                if (resp.isSuccessful) {
+                    val body = resp.body.string()
+                    if (body.isBlank()) null else PlayZTVCryptoUtils.decryptPlayZTV(body.trim())
+                } else {
+                    println("PlayZTV: HTTP ${resp.code} fetching $url")
+                    if (!isAbsolute) baseUrl.invalidate()
+                    null
+                }
             }
         } catch (e: Exception) {
             println("PlayZTV: Exception fetching $url – ${e.message}")
+            if (!isAbsolute) baseUrl.invalidate()
             null
+        }
+    }
+
+    private fun isPlaylistLink(isPlaylist: Boolean?, links: String?): Boolean =
+        isPlaylist == true ||
+            (links?.contains(".m3u", ignoreCase = true) == true && !links.contains(".m3u8", ignoreCase = true))
+
+    /** Expands a single category wrapper into provider entries (possibly multiple for playlists). */
+    private suspend fun processCategoryWrapper(wrapper: PlayZTVCategoryWrapper): List<Map<String, Any>> {
+        try {
+            val cat = parseJson<PlayZTVCategoryData>(wrapper.cat)
+            if (cat.visible == false) return emptyList()
+            val serverName = cat.name.trim()
+            val api = cat.api.trim()
+            val catType = cat.type?.trim() ?: "custom"
+            val categoryEntries = mutableListOf<Map<String, Any>>()
+            var hasExpandedPlaylists = false
+
+            if (catType == "custom" ||
+                api.startsWith("channels/", ignoreCase = true) ||
+                (api.endsWith(".txt", ignoreCase = true) && !api.startsWith("http", ignoreCase = true))
+            ) {
+                try {
+                    val channelContent = fetchDecrypted(api)
+                    if (!channelContent.isNullOrBlank()) {
+                        val channelWrappers = parseJson<List<PlayZTVChannelWrapper>>(channelContent)
+                        val channels = channelWrappers.mapNotNull { w ->
+                            try { parseJson<PlayZTVChannelData>(w.channel) } catch (_: Exception) { null }
+                        }
+                        val validChannels = channels.filter { it.visible != false && !it.links.isNullOrBlank() }
+                        val containsPlaylists = validChannels.any { ch -> isPlaylistLink(ch.is_playlist, ch.links) }
+                        if (containsPlaylists) {
+                            hasExpandedPlaylists = true
+                            validChannels.forEach { ch ->
+                                val rawLinks = ch.links?.trim() ?: ""
+                                val isPlaylist = isPlaylistLink(ch.is_playlist, rawLinks)
+                                categoryEntries.add(
+                                    mapOf(
+                                        "title" to "${ch.name?.trim() ?: "Channel"} ($serverName)",
+                                        "image" to (ch.logo ?: cat.logo ?: ""),
+                                        "catLink" to rawLinks,
+                                        "type" to if (isPlaylist) "m3u" else "custom",
+                                        "server" to serverName
+                                    )
+                                )
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    println("PlayZTV: Error parsing custom channels for $serverName – ${e.message}")
+                }
+            } else {
+                hasExpandedPlaylists = true
+                categoryEntries.add(
+                    mapOf(
+                        "title" to serverName,
+                        "image" to (cat.logo ?: ""),
+                        "catLink" to api,
+                        "type" to catType,
+                        "server" to serverName,
+                        "xorKey" to (cat.xorKey ?: "")
+                    )
+                )
+            }
+
+            if (!hasExpandedPlaylists) {
+                categoryEntries.add(
+                    mapOf(
+                        "title" to serverName,
+                        "image" to (cat.logo ?: ""),
+                        "catLink" to api,
+                        "type" to catType,
+                        "server" to serverName,
+                        "xorKey" to (cat.xorKey ?: "")
+                    )
+                )
+            }
+            return categoryEntries
+        } catch (e: Exception) {
+            println("PlayZTV: Failed parsing category – ${e.message}")
+            return emptyList()
         }
     }
 
@@ -171,32 +313,26 @@ object PlayZTVProviderManager {
      * Returns a list of maps compatible with SKTech's plugin registration.
      */
     suspend fun fetchProviders(): List<Map<String, Any>> = withContext(Dispatchers.IO) {
+        val providers = mutableListOf<Map<String, Any>>()
+        var providerId = 1
         try {
             val decrypted = fetchDecrypted("categories.txt")
             if (!decrypted.isNullOrBlank()) {
                 val wrappers = parseJson<List<PlayZTVCategoryWrapper>>(decrypted)
-                return@withContext wrappers.mapIndexedNotNull { index, wrapper ->
-                    try {
-                        val cat = parseJson<PlayZTVCategoryData>(wrapper.cat)
-                        if (cat.visible != false) {
-                            mapOf(
-                                "id" to (index + 1),
-                                "title" to cat.name,
-                                "image" to (cat.logo ?: ""),
-                                "catLink" to cat.api,
-                                "type" to (cat.type ?: "custom")
-                            )
-                        } else null
-                    } catch (e: Exception) {
-                        println("PlayZTV: Failed to parse category at $index – ${e.message}")
-                        null
-                    }
+                val results = coroutineScope {
+                    wrappers.map { wrapper ->
+                        async(Dispatchers.IO) { processCategoryWrapper(wrapper) }
+                    }.awaitAll()
+                }.flatten()
+                results.forEach { item ->
+                    providers += item + ("id" to providerId)
+                    providerId++
                 }
             }
         } catch (e: Exception) {
             println("PlayZTV: fetchProviders exception – ${e.message}")
         }
-        emptyList()
+        providers
     }
 
     /**
@@ -261,13 +397,17 @@ object PlayZTVProviderManager {
                         try {
                             val channelData = parseJson<PlayZTVChannelData>(wrapper.channel)
                             if (channelData.visible == false) return@mapIndexedNotNull null
-                            val links = channelData.links
-                            if (links.isNullOrBlank()) return@mapIndexedNotNull null
+                            val rawLink = channelData.links
+                            if (rawLink.isNullOrBlank()) return@mapIndexedNotNull null
                             PlayZLiveEventData(
                                 id = index + 1,
                                 title = channelData.name ?: "Unknown Channel",
                                 image = channelData.logo,
-                                slug = links.substringBeforeLast(".", ""),
+                                slug = if (rawLink.startsWith("http", ignoreCase = true)) {
+                                    rawLink
+                                } else {
+                                    rawLink.substringBeforeLast(".")
+                                },
                                 cat = "Custom",
                                 eventInfo = PlayZLiveEventInfo(
                                     null, null, null, null, null,
@@ -275,14 +415,11 @@ object PlayZTVProviderManager {
                                     null, null, null
                                 ),
                                 publish = 1,
-                                formats = if (!channelData.link_names.isNullOrEmpty()) {
-                                    channelData.link_names.map { name ->
-                                        PlayZLiveEventFormat(title = name, webLink = links)
-                                    }
-                                } else {
-                                    links.split(", ").mapIndexed { i, link ->
-                                        PlayZLiveEventFormat(title = "Link ${i + 1}", webLink = link)
-                                    }
+                                formats = rawLink.split(",").mapIndexed { i, link ->
+                                    PlayZLiveEventFormat(
+                                        title = channelData.link_names?.getOrNull(i)?.trim() ?: "Link ${i + 1}",
+                                        webLink = link.trim()
+                                    )
                                 }
                             )
                         } catch (e: Exception) {
@@ -311,13 +448,3 @@ object PlayZTVProviderManager {
         null
     }
 }
-
-// ── Stream URL model returned by /channels/{slug}.txt ────────────────────────
-
-data class PlayZStreamUrl(
-    val name: String?,
-    val link: String?,
-    val scheme: Int?,
-    val api: String?,
-    val tokenApi: String?
-)

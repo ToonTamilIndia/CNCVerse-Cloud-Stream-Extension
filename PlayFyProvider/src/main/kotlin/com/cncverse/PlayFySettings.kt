@@ -78,10 +78,10 @@ class PlayFySettings(
         super.onViewCreated(view, savedInstanceState)
 
         val headerTw: TextView? = view.findViewByName("header_tw")
-        headerTw?.text = getString("header_tw") ?: "PlayFy"
+        headerTw?.text = getString("header_tw")
 
         val header2Tw: TextView? = view.findViewByName("header2_tw")
-        header2Tw?.text = getString("header2_tw") ?: "Select Categories"
+        header2Tw?.text = getString("header2_tw")
 
         val saveBtn: ImageButton? = view.findViewByName("save_btn")
         saveBtn?.makeTvCompatible()
@@ -98,11 +98,10 @@ class PlayFySettings(
                 enabledCategories.forEach { this?.putBoolean(it, true) }
                 this?.apply()
             }
-            PlayFyProviderManager.invalidateCache()
 
             AlertDialog.Builder(requireContext())
                 .setTitle("Restart Required")
-                .setMessage("Settings saved. Restart the app to apply changes?")
+                .setMessage("Changes have been saved. Do you want to restart the app to apply them?")
                 .setPositiveButton("Yes") { _, _ ->
                     dismiss()
                     restartApp()
@@ -147,7 +146,7 @@ class PlayFySettings(
 
         val textView = TextView(requireContext()).apply {
             id = View.generateViewId()
-            text = categoryName
+            text = categoryName.substringAfter("playlist_")
             textSize = 16f
             layoutParams = RelativeLayout.LayoutParams(
                 RelativeLayout.LayoutParams.WRAP_CONTENT,

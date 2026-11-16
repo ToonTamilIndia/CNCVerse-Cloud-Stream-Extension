@@ -53,6 +53,9 @@ class LoggingInterceptor : Interceptor {
     }
 }
 
+private val M3U_EXTINF_PREFIX_RX = Regex("(#EXTINF:.?[0-9]+)", RegexOption.IGNORE_CASE)
+private val M3U_ATTRIBUTE_RX = Regex("""(\w[-\w]*)\s*=\s*(?:"([^"]*)"|([^\s,]+))""", RegexOption.IGNORE_CASE)
+
 class PlayFy(
     private val customName: String = "IPTV Player",
     private val customMainUrl: String = "https://fifabd.site/OPLLX7/LIVE2.m3u"
@@ -64,7 +67,7 @@ class PlayFy(
         const val EXT_VLC_OPT = "#EXTVLCOPT"
     }
 
-    override var lang = "en"
+    override var lang = "ta"
     override var mainUrl = customMainUrl
     override var name = customName
     override val hasMainPage = true
@@ -84,11 +87,36 @@ class PlayFy(
     }
 
     private suspend fun getWithCustomHeaders(url: String): String {
+        val dynamicHeaders = headers.toMutableMap()
+        var hasCustomHeaders = false
+        var finalUrl = url
+        if (url.contains("|")) {
+            val parts = url.split("|", limit = 2)
+            finalUrl = parts[0]
+            for (pair in parts[1].split("&")) {
+                val kv = pair.split("=", limit = 2)
+                if (kv.size != 2) continue
+                val key = kv[0].trim()
+                val value = kv[1].trim()
+                dynamicHeaders.keys.firstOrNull { it.equals(key, ignoreCase = true) }?.let { dynamicHeaders.remove(it) }
+                dynamicHeaders[key] = value
+                hasCustomHeaders = true
+            }
+        }
+
         val request = Request.Builder()
-            .url(url)
+            .url(finalUrl)
             .build()
 
-        return customHttpClient.newCall(request).execute().use { response ->
+        val client = if (hasCustomHeaders) {
+            OkHttpClient.Builder()
+                .addInterceptor(HeaderReplacementInterceptor(dynamicHeaders))
+                .build()
+        } else {
+            customHttpClient
+        }
+
+        return client.newCall(request).execute().use { response ->
             response.body.string()
         }
     }
@@ -139,6 +167,33 @@ class PlayFy(
 
             if (trimmedContent.length < 79) {
                 return trimmedContent
+            }
+
+            val prefix = trimmedContent.substring(0, 3)
+            val suffix = trimmedContent.substring(trimmedContent.length - 3)
+            val shift = trimmedContent[3].toString().toIntOrNull(16)
+            if (prefix.reversed() == suffix && shift != null) {
+                val hexStr = trimmedContent.substring(4, trimmedContent.length - 3)
+                val isHex = hexStr.all { it.isDigit() || it.lowercaseChar() in 'a'..'f' }
+                if (isHex && hexStr.length >= 64 && hexStr.length % 2 == 0) {
+                    val getHexChar = { idx: Int ->
+                        hexStr[if (shift == 0) idx else (shift + idx) % hexStr.length]
+                    }
+                    val getByte = { idx: Int ->
+                        val hexIdx = idx * 2
+                        val c1 = getHexChar(hexIdx).toString().toInt(16)
+                        val c2 = getHexChar(hexIdx + 1).toString().toInt(16)
+                        ((c1 shl 4) or c2).toByte()
+                    }
+                    val key = ByteArray(16) { getByte(it) }
+                    val iv = ByteArray(16) { getByte(it + 16) }
+                    val ct = ByteArray(hexStr.length / 2) { getByte(it) }
+                    val cipher = Cipher.getInstance("AES/CBC/PKCS5PADDING")
+                    cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(iv))
+                    val resultStr = String(cipher.doFinal(ct), StandardCharsets.UTF_8)
+                    val extIndex = resultStr.indexOf("#EXT")
+                    return if (extIndex != -1) resultStr.substring(extIndex) else resultStr
+                }
             }
 
             val part1 = trimmedContent.substring(0, 10)
@@ -214,6 +269,7 @@ class PlayFy(
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
+        PlayFyProviderManager.refreshFromFirebase()
         val rawContent = getWithCustomHeaders(mainUrl)
         val decryptedContent = decryptContent(rawContent)
         val data = IptvPlaylistParser().parseM3U(decryptedContent)
@@ -654,12 +710,14 @@ class IptvPlaylistParser {
                     line.startsWith("#EXTHTTP:") -> {
                         val json = line.removePrefix("#EXTHTTP:").trim()
                         try {
-                            val map = parseJson<Map<String, String>>(json)
-                            if (map.containsKey("cookie")) {
-                                bufferedCookie = map["cookie"]
+                            val map = parseJson<Map<String, String>>(json).mapKeys { it.key.lowercase() }
+                            map["cookie"]?.let { bufferedCookie = it }
+                            map["user-agent"]?.let { bufferedUserAgent = it }
+                            (map["referer"] ?: map["referrer"])?.let {
+                                bufferedHeaders = bufferedHeaders + ("Referer" to it)
                             }
-                            if (map.containsKey("user-agent")) {
-                                bufferedUserAgent = map["user-agent"]
+                            map["origin"]?.let {
+                                bufferedHeaders = bufferedHeaders + ("Origin" to it)
                             }
                         } catch (e: Exception) {
                         }
@@ -669,6 +727,7 @@ class IptvPlaylistParser {
                         val referrer = line.getTagValue("http-referrer") ?: line.getTagValue("http-referer")
 
                         if (userAgent != null) bufferedUserAgent = userAgent
+                        line.getTagValue("http-cookie")?.let { bufferedCookie = it }
                         if (referrer != null) {
                             bufferedHeaders = bufferedHeaders + mapOf("Referer" to referrer)
                         }
@@ -814,8 +873,7 @@ class IptvPlaylistParser {
         startsWith(PlayFy.EXT_M3U) || startsWith(PlayFy.EXT_INF) || startsWith("#KODIPROP")
 
     private fun String.getTitle(): String? {
-        val extInfRegex = Regex("(#EXTINF:.?[0-9]+)", RegexOption.IGNORE_CASE)
-        val afterExtInf = replace(extInfRegex, "").trim()
+        val afterExtInf = replace(M3U_EXTINF_PREFIX_RX, "").trim()
 
         var lastCommaIndex = -1
         var insideQuotes = false
@@ -839,8 +897,7 @@ class IptvPlaylistParser {
     }
 
     private fun String.getUrlParameter(key: String): String? {
-        val urlRegex = Regex("^(.*)\\|", RegexOption.IGNORE_CASE)
-        val paramsString = replace(urlRegex, "").replaceQuotesAndTrim()
+        val paramsString = (if (contains("|")) substringAfterLast("|") else this).replaceQuotesAndTrim()
 
         val params = paramsString.split("&")
 
@@ -859,8 +916,7 @@ class IptvPlaylistParser {
     }
 
     private fun String.getAttributes(): Map<String, String> {
-        val extInfRegex = Regex("(#EXTINF:.?[0-9]+)", RegexOption.IGNORE_CASE)
-        val afterExtInf = replace(extInfRegex, "").trim()
+        val afterExtInf = replace(M3U_EXTINF_PREFIX_RX, "").trim()
 
         var lastCommaIndex = -1
         var insideQuotes = false
@@ -880,9 +936,7 @@ class IptvPlaylistParser {
 
         val attributes = mutableMapOf<String, String>()
 
-        val attributeRegex = Regex("""(\w[-\w]*)\s*=\s*(?:"([^"]*)"|([^\s,]+))""", RegexOption.IGNORE_CASE)
-
-        attributeRegex.findAll(attributesString).forEach { matchResult ->
+        M3U_ATTRIBUTE_RX.findAll(attributesString).forEach { matchResult ->
             val key = matchResult.groups[1]?.value ?: ""
             val quotedValue = matchResult.groups[2]?.value
             val unquotedValue = matchResult.groups[3]?.value

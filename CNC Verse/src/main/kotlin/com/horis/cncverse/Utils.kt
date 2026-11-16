@@ -1,26 +1,7 @@
 package com.horis.cncverse
 
-import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.utils.*
-import com.fasterxml.jackson.core.json.JsonReadFeature
-import com.fasterxml.jackson.databind.DeserializationFeature
-import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import com.lagradost.nicehttp.Requests
-import com.lagradost.nicehttp.ResponseParser
-import kotlin.reflect.KClass
-import okhttp3.FormBody
-import kotlinx.coroutines.*
-import android.content.Context
-import com.lagradost.api.Log
-import org.json.JSONObject
-import java.util.UUID
-import okhttp3.Request
-import java.util.Base64
 import android.app.AlertDialog
-import android.content.DialogInterface
 import android.graphics.Color
-import android.graphics.Point
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.os.Handler
@@ -39,11 +20,25 @@ import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.fasterxml.jackson.core.json.JsonReadFeature
+import com.fasterxml.jackson.databind.DeserializationFeature
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.lagradost.cloudstream3.ui.settings.Globals
+import com.lagradost.nicehttp.Requests
+import com.lagradost.nicehttp.ResponseParser
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import okhttp3.FormBody
+import okhttp3.Request
+import java.util.Base64
+import java.util.UUID
 import kotlin.coroutines.resume
+import kotlin.reflect.KClass
 
 val JSONParser = object : ResponseParser {
     val mapper: ObjectMapper = jacksonObjectMapper().configure(
@@ -69,10 +64,10 @@ val JSONParser = object : ResponseParser {
     }
 }
 
-const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
-
 val app = Requests(responseParser = JSONParser).apply {
-    defaultHeaders = mapOf("User-Agent" to USER_AGENT)
+    defaultHeaders = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
+    )
 }
 
 inline fun <reified T : Any> parseJson(text: String): T {
@@ -108,189 +103,74 @@ fun convertRuntimeToMinutes(runtime: String): Int {
 
 const val NETMIRROR_MOBILE_UA = "Mozilla/5.0 (Linux; Android 12; RMX2117 Build/SP1A.210812.016; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/147.0.7727.55 Mobile Safari/537.36 /OS.Gatu v3.0"
 
-// ── NetMirror mobile playlist models ────────────────────────────────────────
+private val bypassMutex = Mutex()
 
-data class NetMirrorPlaylistSource(
-    val file: String? = null,
-    val label: String? = null
-)
-
-data class NetMirrorPlaylistTrack(
-    val kind: String? = null,
-    val file: String? = null,
-    val label: String? = null
-)
-
-data class NetMirrorPlaylistItem(
-    val sources: List<NetMirrorPlaylistSource>? = null,
-    val tracks: List<NetMirrorPlaylistTrack>? = null
-)
-
-/**
- * Resolves streams via the NetMirror mobile web API (playlist.php).
- * The t_hash_t session cookie (from bypass()) is bound server-side into a
- * per-request `in=` token; expired sessions yield `in=unknown::ni` URLs that
- * 404, so we refresh the bypass cookie once and retry.
- * Full session cookies are attached to every link so Cloudflare does not
- * rate-limit segment requests mid-playback ("too many requests").
- */
-suspend fun netMirrorMobileLoadLinks(
-    mainUrl: String,
-    id: String,
-    title: String,
-    playlistPath: String,
-    baseCookies: Map<String, String>,
-    name: String,
-    subtitleCallback: (SubtitleFile) -> Unit,
-    callback: (ExtractorLink) -> Unit
-): Boolean {
-    var cookieValue = bypass(mainUrl)
-    if (cookieValue.isEmpty()) return false
-
-    val titleEnc = java.net.URLEncoder.encode(title, "UTF-8")
-    val referer = "$mainUrl/mobile/home?app=1"
-    val reqHeaders = mapOf(
-        "User-Agent" to NETMIRROR_MOBILE_UA,
-        "X-Requested-With" to "XMLHttpRequest",
-        "Accept" to "*/*",
-        "Referer" to referer
-    )
-    fun sessionCookies() = baseCookies + mapOf("t_hash_t" to cookieValue)
-    fun cookieHeader() = sessionCookies().entries.joinToString("; ") { "${it.key}=${it.value}" }
-
-    suspend fun fetchPlaylist(): NetMirrorPlaylistItem? {
-        return try {
-            val res = app.get(
-                "$mainUrl$playlistPath?id=$id&t=$titleEnc&tm=${APIHolder.unixTime}",
-                headers = reqHeaders,
-                cookies = sessionCookies(),
-                referer = referer,
-                timeout = 30
-            )
-            tryParseJson<List<NetMirrorPlaylistItem>>(res.text)?.firstOrNull()
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    var item = fetchPlaylist()
-    var sources = item?.sources ?: emptyList()
-
-    if (sources.isEmpty() || sources.any { it.file?.contains("in=unknown") == true }) {
-        NetflixMirrorStorage.clearCookie()
-        cookieValue = bypass(mainUrl)
-        if (cookieValue.isEmpty()) return false
-        item = fetchPlaylist()
-        sources = item?.sources ?: emptyList()
-    }
-
-    if (sources.isEmpty()) return false
-
-    // Subtitles (protocol-relative URLs like //subscdn.top/...)
-    item?.tracks?.forEach { track ->
-        if (track.kind == "captions" && !track.file.isNullOrEmpty()) {
-            val subUrl = if (track.file!!.startsWith("http")) track.file else "https:${track.file}"
-            try {
-                subtitleCallback(SubtitleFile(track.label?.takeIf { it.isNotBlank() } ?: "English", subUrl))
-            } catch (_: Exception) { }
-        }
-    }
-
-    var emitted = false
-    for (src in sources) {
-        val file = src.file ?: continue
-        if (file.contains("in=unknown")) continue
-        val url = when {
-            file.startsWith("https:///") -> file.replace("https:///", "$mainUrl/")
-            file.startsWith("http") -> file
-            else -> "$mainUrl$file"
-        }
-        val label = src.label?.takeIf { it.isNotBlank() } ?: "Auto"
-        callback.invoke(
-            newExtractorLink(name, "$label - $title", url, ExtractorLinkType.M3U8) {
-                this.referer = referer
-                this.headers = mapOf(
-                    "Referer" to referer,
-                    "User-Agent" to NETMIRROR_MOBILE_UA,
-                    "Cookie" to cookieHeader()
-                )
-            }
-        )
-        emitted = true
-    }
-    return emitted
-}
-
-private val bypassScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-private val inflightLock = Any()
-@Volatile private var inflightBypass: Deferred<String>? = null
-
-private fun isCookieValid(): Boolean {
+private fun savedCookie(): String? {
     val (savedCookie, savedTimestamp) = NetflixMirrorStorage.getCookie()
-    return !savedCookie.isNullOrEmpty() && (System.currentTimeMillis() - savedTimestamp < 43_200_000)
-}
-
-fun primeBypass(mainUrl: String) {
-    if (isCookieValid()) return
-    synchronized(inflightLock) {
-        if (isCookieValid()) return
-        if (inflightBypass?.isActive == true) return
-        inflightBypass = bypassScope.async {
-            doBypass(mainUrl, allowWebView = false)
-        }
-    }
-}
-
-suspend fun ensureBypass(mainUrl: String): String {
-    if (isCookieValid()) {
-        return NetflixMirrorStorage.getCookie().first ?: ""
-    }
-
-    val activeJob = synchronized(inflightLock) {
-        if (isCookieValid()) {
-            return NetflixMirrorStorage.getCookie().first ?: ""
-        }
-        inflightBypass?.takeIf { it.isActive } ?: run {
-            val d = bypassScope.async {
-                doBypass(mainUrl, allowWebView = true)
-            }
-            inflightBypass = d
-            d
-        }
-    }
-
-    return try {
-        activeJob.await()
-    } catch (_: Exception) {
-        NetflixMirrorStorage.getCookie().first ?: ""
+    return savedCookie?.takeIf {
+        it.isNotEmpty() && System.currentTimeMillis() - savedTimestamp < 54000000
     }
 }
 
 suspend fun bypass(mainUrl: String): String {
-    return ensureBypass(mainUrl)
+    savedCookie()?.let { return it }
+    return bypassMutex.withLock {
+        savedCookie()?.let { return@withLock it }
+        val newCookie = verifyBypass()
+            .ifEmpty { netMirrorMobileBypass(mainUrl) }
+            .ifEmpty { solveBypassInWebView() }
+        if (newCookie.isNotEmpty()) {
+            NetflixMirrorStorage.saveCookie(newCookie)
+        } else {
+            NetflixMirrorStorage.clearCookie()
+        }
+        newCookie
+    }
 }
 
-private suspend fun doBypass(mainUrl: String, allowWebView: Boolean): String {
-    if (isCookieValid()) {
-        return NetflixMirrorStorage.getCookie().first ?: ""
+private fun verifyBypass(): String {
+    val headers = mapOf(
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Accept-Encoding" to "gzip, deflate, br, zstd",
+        "Accept-Language" to "en-US,en;q=0.9",
+        "Cache-Control" to "max-age=0",
+        "Connection" to "keep-alive",
+        "Content-Type" to "application/x-www-form-urlencoded",
+        "Origin" to "https://net22.cc",
+        "Referer" to "https://net22.cc/verify2",
+        "sec-ch-ua" to "\"Google Chrome\";v=\"147\", \"Not.A/Brand\";v=\"8\", \"Chromium\";v=\"147\"",
+        "sec-ch-ua-mobile" to "?0",
+        "sec-ch-ua-platform" to "\"Windows\"",
+        "Sec-Fetch-Dest" to "document",
+        "Sec-Fetch-Mode" to "navigate",
+        "Sec-Fetch-Site" to "same-origin",
+        "Sec-Fetch-User" to "?1",
+        "Upgrade-Insecure-Requests" to "1",
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
+    )
+    return try {
+        val body = FormBody.Builder()
+            .add("g-recaptcha-response", UUID.randomUUID().toString())
+            .build()
+        val client = app.baseClient.newBuilder()
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .build()
+        val request = Request.Builder()
+            .url("https://net52.cc/verify.php")
+            .post(body)
+            .apply { headers.forEach { (key, value) -> addHeader(key, value) } }
+            .build()
+        client.newCall(request).execute().use { response ->
+            response.headers("Set-Cookie")
+                .firstOrNull { it.startsWith("t_hash_t=") }
+                ?.substringAfter("t_hash_t=")
+                ?.substringBefore(";")
+                .orEmpty()
+        }
+    } catch (_: Exception) {
+        ""
     }
-
-    val newCookie = netMirrorMobileBypass(mainUrl)
-    if (newCookie.isNotEmpty()) {
-        NetflixMirrorStorage.saveCookie(newCookie)
-        return newCookie
-    }
-
-    if (!allowWebView) {
-        return ""
-    }
-
-    val wvCookie = solveBypassInWebView()
-    if (wvCookie.isNotEmpty()) {
-        NetflixMirrorStorage.saveCookie(wvCookie)
-        return wvCookie
-    }
-    return ""
 }
 
 private suspend fun netMirrorMobileBypass(mainUrl: String): String {
@@ -411,6 +291,11 @@ private var resolvedApiUrl: String = ""
 
 suspend fun resolveApiUrl(): String {
     if (resolvedApiUrl.isNotBlank()) return resolvedApiUrl
+    val (savedApiBase, savedTimestamp) = NetflixMirrorStorage.getApiBase()
+    if (!savedApiBase.isNullOrEmpty() && System.currentTimeMillis() - savedTimestamp < 86400000) {
+        resolvedApiUrl = savedApiBase
+        return resolvedApiUrl
+    }
     for (encoded in newTvDomains) {
         val base = decodeBase64(encoded).trimEnd('/')
         try {
@@ -419,6 +304,7 @@ suspend fun resolveApiUrl(): String {
             val tokenHash = response.token_hash
             if (!tokenHash.isNullOrBlank()) {
                 resolvedApiUrl = decodeBase64(tokenHash).trimEnd('/')
+                NetflixMirrorStorage.saveApiBase(resolvedApiUrl)
                 return resolvedApiUrl
             }
         } catch (_: Exception) {
@@ -446,106 +332,18 @@ data class NewTvOtpResponse(
     val error_msg: String? = null
 )
 
-const val NETMIRROR_TV_URL = "https://netmirror.gg/tv"
-
-private fun fetchNetmirrorTvHtmlBuildHeaders(cfClearance: String?): Map<String, String> {
-    val headers = mutableMapOf(
-        "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
-        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language" to "en-US,en;q=0.9"
-    )
-    if (!cfClearance.isNullOrEmpty()) {
-        headers["Cookie"] = "cf_clearance=$cfClearance"
-    }
-    return headers
-}
-
-private fun fetchNetmirrorTvHtmlIsCloudflare(html: String, statusCode: Int): Boolean {
-    if (statusCode == 403 || statusCode == 503) return true
-    return html.contains("netmirror.gg/tv", ignoreCase = true) &&
-        (html.contains("cf-browser-verification", ignoreCase = true) ||
-         html.contains("Checking if the site connection is secure", ignoreCase = true) ||
-         html.contains("Just a moment", ignoreCase = true) ||
-         html.contains("cloudflare", ignoreCase = true))
-}
-
-suspend fun fetchNetmirrorTvHtml(): String {
-    val (savedCf, savedCfTs) = NetflixMirrorStorage.getCfCookie()
-    val cfCookieToUse = if (!savedCf.isNullOrEmpty() && System.currentTimeMillis() - savedCfTs < 82800000) savedCf else null
-    try {
-        val firstResponse = app.get(NETMIRROR_TV_URL, fetchNetmirrorTvHtmlBuildHeaders(cfCookieToUse))
-        if (!fetchNetmirrorTvHtmlIsCloudflare(firstResponse.text, firstResponse.code)) {
-            return firstResponse.text
-        }
-        val cfClearance = solveCloudflareInWebView(NETMIRROR_TV_URL)
-        if (cfClearance.isNullOrEmpty()) return firstResponse.text
-        NetflixMirrorStorage.saveCfCookie(cfClearance)
-        return try {
-            app.get(NETMIRROR_TV_URL, fetchNetmirrorTvHtmlBuildHeaders(cfClearance)).text
-        } catch (e: Exception) {
-            firstResponse.text
-        }
-    } catch (e: Exception) {
-        return ""
-    }
-}
-
 suspend fun getNewTvUserToken(apiBase: String, ott: String, forceRefresh: Boolean = false): String {
-    val (savedToken, savedTimestamp) = NetflixMirrorStorage.getUserToken(ott)
-    if (!forceRefresh && !savedToken.isNullOrEmpty()) return savedToken
-
-    var currentOtp = NetflixMirrorStorage.getOtp() ?: "109400"
-    val otpHeaders = mutableMapOf(
+    val otpHeaders = mapOf(
         "accept" to "application/json, text/plain, */*",
         "cache-control" to "no-cache, no-store, must-revalidate",
         "Connection" to "Keep-Alive",
         "expires" to "0",
-        "otp" to currentOtp,
+        "otp" to "111111",
         "pragma" to "no-cache",
         "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.Gatu v1.0"
     )
-
-    var otpResponse = try {
-        app.get("$apiBase/newtv/otp.php", otpHeaders).parsedSafe<NewTvOtpResponse>()
-    } catch (e: Exception) {
-        null
-    }
-
-    if (otpResponse?.status == "error" && otpResponse.error_msg == "Invalid OTP, Please Enter Valid OTP") {
-        val maxCaptchaAttempts = 3
-        var attempt = 1
-        while (true) {
-            val tvHtml = fetchNetmirrorTvHtml()
-            val otpMatch = Regex("""(?m)^\s*const\s+otp\s*=\s*\[(.*?)]""").find(tvHtml)
-            if (otpMatch != null) {
-                val newOtp = Regex("""\s*,\s*""").replace(otpMatch.groupValues[1], "").replace(" ", "")
-                if (newOtp.isNotEmpty()) {
-                    currentOtp = newOtp
-                    NetflixMirrorStorage.saveOtp(currentOtp)
-                    otpHeaders["otp"] = currentOtp
-                    otpResponse = try {
-                        app.get("$apiBase/newtv/otp.php", otpHeaders).parsedSafe<NewTvOtpResponse>()
-                    } catch (e: Exception) {
-                        null
-                    }
-                }
-            }
-            NetflixMirrorStorage.clearCfCookie()
-            if (attempt >= maxCaptchaAttempts) break
-            delay(500L)
-            attempt++
-        }
-        val newToken = otpResponse?.usertoken.orEmpty()
-        if (newToken.isNotEmpty()) {
-            NetflixMirrorStorage.saveUserToken(ott, newToken)
-        }
-        return newToken
-    }
-    val newToken = otpResponse?.usertoken.orEmpty()
-    if (newToken.isNotEmpty()) {
-        NetflixMirrorStorage.saveUserToken(ott, newToken)
-    }
-    return newToken
+    return app.get("$apiBase/newtv/otp.php", otpHeaders)
+        .parsedSafe<NewTvOtpResponse>()?.usertoken.orEmpty()
 }
 
 suspend fun solveBypassInWebView(): String {
@@ -755,132 +553,6 @@ suspend fun solveBypassInWebView(): String {
                 wv.loadUrl("https://net77.cc/verify2")
             } catch (e: Exception) {
                 cont.resume("")
-            }
-        }
-    }
-}
-
-suspend fun solveCloudflareInWebView(url: String): String? {
-    val ctx = NetflixMirrorProvider.context ?: return null
-    return withContext(Dispatchers.Main) {
-        suspendCancellableCoroutine { cont ->
-            try {
-                val cookieManager = CookieManager.getInstance()
-                cookieManager.setAcceptCookie(true)
-                val wv = WebView(ctx)
-                try { cookieManager.setAcceptThirdPartyCookies(wv, true) } catch (_: NoSuchMethodError) {} catch (_: Exception) {}
-                val ws = wv.settings
-                ws.javaScriptEnabled = true
-                ws.domStorageEnabled = true
-                ws.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                ws.userAgentString = "Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
-                ws.mediaPlaybackRequiresUserGesture = false
-                wv.webChromeClient = WebChromeClient()
-
-                var resolved = false
-                fun extractAndFinish() {
-                    if (resolved) return
-                    val cookies = cookieManager.getCookie(url) ?: ""
-                    val match = Regex("""cf_clearance=([^;]+)""").find(cookies)
-                    val cf = match?.groupValues?.get(1)
-                    if (!cf.isNullOrEmpty()) {
-                        resolved = true
-                        try { wv.destroy() } catch (_: Exception) {}
-                        try {
-                            val tag = wv.tag
-                            if (tag is android.app.Dialog) tag.dismiss()
-                        } catch (_: Exception) {}
-                        cont.resume(cf)
-                    }
-                }
-
-                wv.webViewClient = object : WebViewClient() {
-                    override fun onPageFinished(view: WebView?, url: String?) {
-                        super.onPageFinished(view, url)
-                        extractAndFinish()
-                        if (!resolved) {
-                            val handler = Handler(Looper.getMainLooper())
-                            handler.postDelayed(object : Runnable {
-                                override fun run() {
-                                    if (!resolved) {
-                                        extractAndFinish()
-                                        if (!resolved) {
-                                            handler.postDelayed(this, 1000L)
-                                        }
-                                    }
-                                }
-                            }, 1000L)
-                        }
-                    }
-                }
-
-                val dp = ctx.resources.displayMetrics.density
-                val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-                val metrics = Point()
-                wm.defaultDisplay.getSize(metrics)
-                val params = WindowManager.LayoutParams(
-                    (metrics.x * 0.95f).toInt(),
-                    (metrics.y * 0.9f).toInt()
-                )
-                val wrapper = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
-                val infoBar = TextView(ctx).apply {
-                    text = "Solve the Cloudflare captcha"
-                    setTextColor(Color.WHITE)
-                    setBackgroundColor(Color.parseColor("#1A1A2E"))
-                    textSize = 13f
-                    val p = (10 * dp).toInt()
-                    setPadding(p, p, p, p)
-                    layoutParams = LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.MATCH_PARENT,
-                        LinearLayout.LayoutParams.WRAP_CONTENT
-                    )
-                }
-                val container = FrameLayout(ctx).apply {
-                    layoutParams = LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.MATCH_PARENT,
-                        0,
-                        1f
-                    )
-                    isFocusable = true
-                    isFocusableInTouchMode = true
-                }
-                wv.layoutParams = FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.MATCH_PARENT,
-                    FrameLayout.LayoutParams.MATCH_PARENT
-                )
-                container.addView(wv)
-
-                val dialog = AlertDialog.Builder(ctx)
-                    .setView(wrapper)
-                    .setCancelable(false)
-                    .create()
-                dialog.window?.let { win ->
-                    win.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-                    win.setLayout(params.width, params.height)
-                }
-                wv.tag = dialog
-                dialog.setOnDismissListener {
-                    if (!resolved) {
-                        resolved = true
-                        try { wv.destroy() } catch (_: Exception) {}
-                        cont.resume(null)
-                    }
-                }
-                Handler(Looper.getMainLooper()).postDelayed({
-                    if (!resolved) {
-                        resolved = true
-                        try { wv.destroy() } catch (_: Exception) {}
-                        try { dialog.dismiss() } catch (_: Exception) {}
-                        try { cont.resume(null) } catch (_: Exception) {}
-                    }
-                }, 120000L)
-
-                wrapper.addView(infoBar)
-                wrapper.addView(container)
-                dialog.show()
-                wv.loadUrl(url)
-            } catch (e: Exception) {
-                cont.resume(null)
             }
         }
     }

@@ -7,24 +7,14 @@ import com.horis.cncverse.entities.SearchData
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
-import com.lagradost.cloudstream3.utils.ExtractorLink
-import okhttp3.Headers
-import okhttp3.Interceptor
-import okhttp3.Response
 import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.APIHolder.unixTime
-import android.content.Intent
-import android.net.Uri
-import android.os.Handler
-import android.os.Looper
-import com.lagradost.cloudstream3.ui.settings.Globals.TV
-import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
 
 class PrimeVideoMirrorProvider : MainAPI() {
     companion object {
         var context: Context? = null
     }
-    
+
     override val supportedTypes = setOf(
         TvType.Movie,
         TvType.TvSeries,
@@ -56,42 +46,55 @@ class PrimeVideoMirrorProvider : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        primeBypass(mainUrl)
-        val data = app.get("$mainUrl/pv/homepage.php", headers = headers).parsed<PvHomepageData>()
-        val homePageLists = mutableListOf<HomePageList>()
-
-        data.slider?.let { sliders ->
-            val sliderItems = sliders.mapNotNull { item ->
-                newAnimeSearchResponse(item.title ?: "", Id(item.id).toJson()) {
-                    posterUrl = "https://imgcdn.kim/pv/v/${item.id}.jpg"
-                    posterHeaders = mapOf("Referer" to "$mainUrl/home")
-                }
-            }
-            if (sliderItems.isNotEmpty()) {
-                homePageLists.add(HomePageList("Featured", sliderItems, isHorizontalImages = true))
-            }
+        if (cookie_value.isEmpty()) {
+            cookie_value = bypass(mainUrl)
         }
-
-        data.post?.forEach { cat ->
-            val idList = cat.ids.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-            val items = idList.map { id ->
-                newAnimeSearchResponse("", Id(id).toJson()) {
-                    posterUrl = "https://imgcdn.kim/pv/v/$id.jpg"
-                    posterHeaders = mapOf("Referer" to "$mainUrl/home")
-                }
-            }
-            if (items.isNotEmpty()) {
-                homePageLists.add(HomePageList(cat.cate, items, isHorizontalImages = false))
-            }
+        val cookies = mapOf(
+            "t_hash_t" to cookie_value,
+            "ott" to "pv",
+            "hd" to "on"
+        )
+        val document = app.get(
+            "$mainUrl/mobile/home?app=1",
+            cookies = cookies,
+            headers = headers,
+            referer = "$mainUrl/mobile/home?app=1",
+        ).document
+        val items = document.select(".tray-container, #top10").map {
+            it.toHomePageList()
         }
+        return newHomePageResponse(items, false)
+    }
 
-        return newHomePageResponse(homePageLists, false)
+    private fun Element.toHomePageList(): HomePageList {
+        val name = select("h2, span").text()
+        val items = select("article, .top10-post").mapNotNull {
+            it.toSearchResult()
+        }
+        return HomePageList(name, items, isHorizontalImages = false)
+    }
+
+    private fun Element.toSearchResult(): SearchResponse? {
+        val id = selectFirst("a")?.attr("data-post") ?: attr("data-post")
+
+
+        return newAnimeSearchResponse("", Id(id).toJson()) {
+            this.posterUrl = "https://imgcdn.kim/pv/v/$id.jpg"
+            posterHeaders = mapOf("Referer" to "$mainUrl/home")
+        }
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        primeBypass(mainUrl)
-        val url = "$mainUrl/pv/search.php?s=$query"
-        val data = app.get(url, headers = headers, referer = "$mainUrl/home").parsed<SearchData>()
+        if (cookie_value.isEmpty()) {
+            cookie_value = bypass(mainUrl)
+        }
+        val cookies = mapOf(
+            "t_hash_t" to cookie_value,
+            "hd" to "on",
+            "ott" to "pv"
+        )
+        val url = "$mainUrl/mobile/pv/search.php?s=$query&t=${APIHolder.unixTime}"
+        val data = app.get(url, referer = "$mainUrl/home", cookies = cookies).parsed<SearchData>()
 
         return data.searchResult.map {
             newAnimeSearchResponse(it.t, Id(it.id).toJson()) {
@@ -102,8 +105,9 @@ class PrimeVideoMirrorProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        
-        cookie_value = ensureBypass(mainUrl)
+        if (cookie_value.isEmpty()) {
+            cookie_value = bypass(mainUrl)
+        }
         val id = parseJson<Id>(url).id
         val cookies = mapOf(
             "t_hash_t" to cookie_value,
@@ -219,66 +223,24 @@ class PrimeVideoMirrorProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        cookie_value = ensureBypass(mainUrl)
-        val ld = parseJson<LoadData>(data)
-        return netMirrorMobileLoadLinks(
-            mainUrl = mainUrl,
-            id = ld.id,
-            title = ld.title,
-            playlistPath = "/mobile/pv/playlist.php",
-            baseCookies = mapOf("hd" to "on", "ott" to "pv"),
-            name = name,
-            subtitleCallback = subtitleCallback,
-            callback = callback
-        )
-    }
+        val apiBase = resolveApiUrl()
+        val id = parseJson<LoadData>(data).id
+        val userToken = getNewTvUserToken(apiBase, "pv")
+        val response = app.get(
+            "$apiBase/newtv/player.php?id=$id",
+            headers = buildNewTvHeaders("pv", mapOf("Usertoken" to userToken))
+        ).parsed<NewTvPlayerResponse>()
 
-    data class PvSliderItem(
-        val id: String,
-        val title: String? = null,
-        val desc: String? = null,
-        val img: String? = null
-    )
+        val videoLink = response.video_link
+        if (videoLink == null || videoLink.isBlank()) return false
 
-    data class PvCategoryItem(
-        val cate: String,
-        val ids: String
-    )
-
-    data class PvHomepageData(
-        val slider: List<PvSliderItem>? = null,
-        val post: List<PvCategoryItem>? = null
-    )
-
-    @Suppress("ObjectLiteralToLambda")
-    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        val sessionCookie = buildList {
-            add("hd=on")
-            add("ott=pv")
-            if (cookie_value.isNotEmpty()) add("t_hash_t=$cookie_value")
-        }.joinToString("; ")
-        val videoHeaders = mapOf(
-            "User-Agent" to (headers["User-Agent"] ?: USER_AGENT),
-            "Cookie" to sessionCookie
-        )
-        return object : Interceptor {
-            override fun intercept(chain: Interceptor.Chain): Response {
-                val request = chain.request()
-                val rawUrl = request.url.toString()
-                val targetUrl = if (rawUrl.startsWith("https:///")) {
-                    rawUrl.replace("https:///", "$mainUrl/")
-                } else rawUrl
-
-                val builder = request.newBuilder().url(targetUrl)
-                for ((key, value) in videoHeaders) {
-                    builder.header(key, value)
-                }
-                if (request.header("Referer").isNullOrBlank()) {
-                    builder.header("Referer", extractorLink.referer)
-                }
-                return chain.proceed(builder.build())
+        callback.invoke(
+            newExtractorLink(name, name, videoLink, ExtractorLinkType.M3U8) {
+                this.referer = response.referer ?: apiBase
             }
-        }
+        )
+
+        return true
     }
 
     data class Id(
@@ -288,7 +250,4 @@ class PrimeVideoMirrorProvider : MainAPI() {
     data class LoadData(
         val title: String, val id: String
     )
-
-
-
 }

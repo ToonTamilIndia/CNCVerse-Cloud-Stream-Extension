@@ -2,13 +2,12 @@ package com.horis.cncverse
 
 import android.content.Context
 import com.horis.cncverse.entities.EpisodesData
+import com.horis.cncverse.entities.PlayList
 import com.horis.cncverse.entities.PostData
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
-import okhttp3.Interceptor
-import okhttp3.Response
 import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.APIHolder.unixTime
 
@@ -63,7 +62,7 @@ open class DisneyStudioProvider(
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        cookie_value = ensureBypass(mainUrl)
+        cookie_value = bypass(mainUrl)
         val document = app.get(
             "$mainUrl/mobile/home?app=1",
             cookies = buildCookies(),
@@ -94,7 +93,7 @@ open class DisneyStudioProvider(
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        cookie_value = ensureBypass(mainUrl)
+        cookie_value = bypass(mainUrl)
         val id = parseJson<Id>(url).id
         val data = app.get(
             "$mainUrl/mobile/hs/post.php?id=$id&t=${APIHolder.unixTime}",
@@ -200,51 +199,55 @@ open class DisneyStudioProvider(
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val ld = parseJson<LoadData>(data)
-        val baseCookies = buildCookies().toMutableMap()
-        baseCookies.remove("t_hash_t")
-        return netMirrorMobileLoadLinks(
-            mainUrl = mainUrl,
-            id = ld.id,
-            title = ld.title,
-            playlistPath = "/mobile/hs/playlist.php",
-            baseCookies = baseCookies,
-            name = name,
-            subtitleCallback = subtitleCallback,
-            callback = callback
+        cookie_value = bypass(mainUrl)
+        val (title, id) = parseJson<LoadData>(data)
+        val cookies = mapOf(
+            "t_hash_t" to cookie_value,
+            "ott" to "hs",
+            "hd" to "on"
         )
-    }
-
-    @Suppress("ObjectLiteralToLambda")
-    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        val sessionCookie = buildList {
-            add("hd=on")
-            add("ott=dp")
-            if (studio.isNotEmpty()) add("studio=$studio")
-            if (cookie_value.isNotEmpty()) add("t_hash_t=$cookie_value")
-        }.joinToString("; ")
-        val videoHeaders = mapOf(
-            "User-Agent" to NETMIRROR_MOBILE_UA,
-            "Cookie" to sessionCookie
+        val cookieStr = cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
+        val referer = "$mainUrl/mobile/home?app=1"
+        val playlistHeaders = mapOf(
+            "Accept" to "*/*",
+            "Accept-Language" to "en-IN,en-US;q=0.9,en;q=0.8",
+            "Connection" to "keep-alive",
+            "Cookie" to cookieStr,
+            "Referer" to referer,
+            "sec-ch-ua" to "\"Android WebView\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+            "sec-ch-ua-mobile" to "?0",
+            "sec-ch-ua-platform" to "\"Android\"",
+            "Sec-Fetch-Dest" to "empty",
+            "Sec-Fetch-Mode" to "cors",
+            "Sec-Fetch-Site" to "same-origin",
+            "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0",
+            "X-Requested-With" to "app.netmirror.netmirrornew"
         )
-        return object : Interceptor {
-            override fun intercept(chain: Interceptor.Chain): Response {
-                val request = chain.request()
-                val rawUrl = request.url.toString()
-                val targetUrl = if (rawUrl.startsWith("https:///")) {
-                    rawUrl.replace("https:///", "$mainUrl/")
-                } else rawUrl
+        val playlist = app.get(
+            "$mainUrl/mobile/hs/playlist.php?id=$id&t=$title&tm=${APIHolder.unixTime}",
+            headers = playlistHeaders,
+            referer = referer
+        ).parsed<PlayList>()
 
-                val builder = request.newBuilder().url(targetUrl)
-                for ((key, value) in videoHeaders) {
-                    builder.header(key, value)
-                }
-                if (request.header("Referer").isNullOrBlank()) {
-                    builder.header("Referer", extractorLink.referer)
-                }
-                return chain.proceed(builder.build())
+        playlist.forEach { item ->
+            item.sources.forEach { source ->
+                callback.invoke(
+                    newExtractorLink(name, source.label, mainUrl + source.file, ExtractorLinkType.M3U8) {
+                        this.headers = playlistHeaders
+                        this.referer = referer
+                        this.quality = getQualityFromName(source.file.substringAfter("q=", ""))
+                    }
+                )
+            }
+            item.tracks?.filter { it.kind == "captions" }?.forEach { track ->
+                subtitleCallback.invoke(
+                    newSubtitleFile(track.label.toString(), httpsify(track.file.toString().replace("\\", ""))) {
+                        this.headers = mapOf("Referer" to "$mainUrl/")
+                    }
+                )
             }
         }
+        return true
     }
 
     data class Id(val id: String)

@@ -11,6 +11,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.CheckBox
 import android.widget.ImageButton
+import android.webkit.CookieManager
 import android.widget.LinearLayout
 import android.widget.RelativeLayout
 import android.widget.TextView
@@ -18,6 +19,7 @@ import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.res.ResourcesCompat
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
+import com.google.android.material.button.MaterialButton
 import com.lagradost.cloudstream3.CommonActivity.showToast
 
 
@@ -106,6 +108,27 @@ class CNCVerseSettings(
         val scrollView: LinearLayout? = view.findViewByName("list")
         studios.forEach { option ->
             scrollView?.addView(getStudioRow(option))
+        }
+
+        val clearCacheBtn = MaterialButton(requireContext()).apply {
+            text = "Clear All Cache"
+            isAllCaps = false
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = 32
+            }
+        }
+        clearCacheBtn.setOnClickListener {
+            NetflixMirrorStorage.init(requireContext())
+            NetflixMirrorStorage.clearAll()
+            CookieManager.getInstance().removeAllCookies(null)
+            CookieManager.getInstance().flush()
+            showToast("All cache and tokens cleared")
+        }
+        if (scrollView != null) {
+            scrollView.addView(clearCacheBtn)
         }
 
         saveBtn?.setOnClickListener {

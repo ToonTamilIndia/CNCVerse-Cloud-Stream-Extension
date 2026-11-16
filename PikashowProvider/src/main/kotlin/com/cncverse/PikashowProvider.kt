@@ -424,7 +424,7 @@ class PikashowProvider : MainAPI() {
                     if (response.code == 200) {
                         val videoData = mapper.readValue<VideoApiResponse>(response.text).data
                         if (videoData != null) {
-                            addVideoLinksToCallback(videoData, callback, "Episode $episode", episode.toIntOrNull())
+                            addVideoLinksToCallback(videoData, callback, "Episode $episode", episode.toIntOrNull(), season.toIntOrNull())
                             return true
                         }
                     }
@@ -504,7 +504,8 @@ class PikashowProvider : MainAPI() {
         videoData: VideoData,
         callback: (ExtractorLink) -> Unit,
         contentName: String,
-        episodeNumber: Int? = null
+        episodeNumber: Int? = null,
+        seasonNumber: Int? = null
     ) {
         val baseHeaders = mutableMapOf<String, String>()
         videoData.heastr?.let { baseHeaders["heastr"] = it }
@@ -545,12 +546,44 @@ class PikashowProvider : MainAPI() {
 
         var emitted = 0
 
-        val hasResolutions = !videoData.resolutions.isNullOrEmpty()
-        val hasLanguageResolutions =
-            videoData.languageOptions?.any { !it.resolutions.isNullOrEmpty() } == true ||
-            videoData.languages?.any { !it.resolutions.isNullOrEmpty() } == true
+        // The API's resolution URLs are signed for its own IP and 404 on clients, so resolve
+        // the player first and only fall back to them when that yields nothing.
+        for ((serverLabel, playerUrl) in candidates) {
+            val serverSuffix = serverLabel?.takeIf { it.isNotBlank() && it != "Server1" }
+                ?.let { " [$it]" } ?: ""
 
-        if (hasResolutions || hasLanguageResolutions) {
+            // 1. HDVB player pages (/play/...) → resolve via playlist API
+            if (playerUrl.contains("/play")) {
+                try {
+                    val links = resolveHdbvLinks(playerUrl, episodeNumber, seasonNumber)
+                    for ((label, streamUrl) in links) {
+                        callback(
+                            newExtractorLink(name, "$contentName$serverSuffix - ${label.ifEmpty { "HDBV" }}", streamUrl, ExtractorLinkType.M3U8) {
+                                referer = originOf(playerUrl)
+                                quality = Qualities.P720.value
+                                headers = finalHeaders
+                            }
+                        )
+                        emitted++
+                    }
+                } catch (_: Exception) { }
+            }
+
+            // 2. Embed pages (streamtape /e/, dood, etc.) → route through extractors
+            if (isEmbedUrl(playerUrl)) {
+                val resolved = try {
+                    loadExtractor(playerUrl, originOf(playerUrl).ifEmpty { playerUrl }, { }, callback)
+                } catch (_: Exception) {
+                    false
+                }
+                if (resolved) emitted++
+            }
+
+            // If this server produced anything, don't fall through to next server blindly
+            if (emitted > 0) break
+        }
+
+        if (emitted == 0) {
             videoData.resolutions?.forEach { resolution ->
                 resolution.url?.let { url ->
                     val linkType = if (url.contains("m3u8") || videoData.sourceType == "hls") {
@@ -588,43 +621,6 @@ class PikashowProvider : MainAPI() {
                         emitted++
                     }
                 }
-            }
-        }
-
-        if (emitted == 0) {
-            for ((serverLabel, playerUrl) in candidates) {
-                val serverSuffix = serverLabel?.takeIf { it.isNotBlank() && it != "Server1" }
-                    ?.let { " [$it]" } ?: ""
-
-                // 1. HDVB player pages (/play/...) → resolve via playlist API
-                if (playerUrl.contains("/play")) {
-                    try {
-                        val links = resolveHdbvLinks(playerUrl, episodeNumber)
-                        for ((label, streamUrl) in links) {
-                            callback(
-                                newExtractorLink(name, "$contentName$serverSuffix - ${label.ifEmpty { "HDBV" }}", streamUrl, ExtractorLinkType.M3U8) {
-                                    referer = originOf(playerUrl)
-                                    quality = Qualities.P720.value
-                                    headers = finalHeaders
-                                }
-                            )
-                            emitted++
-                        }
-                    } catch (_: Exception) { }
-                }
-
-                // 2. Embed pages (streamtape /e/, dood, etc.) → route through extractors
-                if (isEmbedUrl(playerUrl)) {
-                    val resolved = try {
-                        loadExtractor(playerUrl, originOf(playerUrl).ifEmpty { playerUrl }, { }, callback)
-                    } catch (_: Exception) {
-                        false
-                    }
-                    if (resolved) emitted++
-                }
-
-                // If this server produced anything, don't fall through to next server blindly
-                if (emitted > 0) break
             }
         }
 
@@ -679,7 +675,7 @@ class PikashowProvider : MainAPI() {
      * (`var p = {...}; new HDVBPlayer(p)`), scanning every script tag.
      * Player responses nest either as season→episode→audiotrack or flat audiotracks.
      */
-    private suspend fun resolveHdbvLinks(playerUrl: String, episodeNumber: Int? = null): List<Pair<String, String>> {
+    private suspend fun resolveHdbvLinks(playerUrl: String, episodeNumber: Int? = null, seasonNumber: Int? = null): List<Pair<String, String>> {
         val origin = originOf(playerUrl)
         if (origin.isEmpty()) return emptyList()
 
@@ -730,7 +726,7 @@ class PikashowProvider : MainAPI() {
             if (playlistPath.isEmpty()) continue
             val csrfKey = config.optString("key", "")
 
-            for ((label, streamUrl) in resolveHdbvPlaylist(origin, playlistPath, csrfKey, playerUrl, episodeNumber)) {
+            for ((label, streamUrl) in resolveHdbvPlaylist(origin, playlistPath, csrfKey, playerUrl, episodeNumber, seasonNumber)) {
                 if (seenUrls.add(streamUrl)) links.add(label to streamUrl)
             }
             if (links.isNotEmpty()) break
@@ -761,7 +757,8 @@ class PikashowProvider : MainAPI() {
         playlistPath: String,
         csrfKey: String,
         referer: String,
-        episodeNumber: Int? = null
+        episodeNumber: Int? = null,
+        seasonNumber: Int? = null
     ): List<Pair<String, String>> {
         val playlistUrl = if (playlistPath.startsWith("http")) {
             playlistPath
@@ -778,7 +775,7 @@ class PikashowProvider : MainAPI() {
 
         val results = mutableListOf<Pair<String, String>>()
         val seenTokens = mutableSetOf<String>()
-        walkHdbvEntries(root, "", csrfKey, referer, origin, results, seenTokens, episodeNumber)
+        walkHdbvEntries(root, "", csrfKey, referer, origin, results, seenTokens, episodeNumber, seasonNumber)
         return results
     }
 
@@ -790,12 +787,13 @@ class PikashowProvider : MainAPI() {
         origin: String,
         out: MutableList<Pair<String, String>>,
         seenTokens: MutableSet<String>,
-        episodeNumber: Int? = null
+        episodeNumber: Int? = null,
+        seasonNumber: Int? = null
     ) {
         when (node) {
             is JSONArray -> {
                 for (i in 0 until node.length()) {
-                    walkHdbvEntries(node.opt(i), prefix, csrfKey, referer, origin, out, seenTokens, episodeNumber)
+                    walkHdbvEntries(node.opt(i), prefix, csrfKey, referer, origin, out, seenTokens, episodeNumber, seasonNumber)
                 }
             }
             is JSONObject -> {
@@ -806,11 +804,14 @@ class PikashowProvider : MainAPI() {
                     node.optString("title", "").takeIf { it.isNotEmpty() }?.let { labelParts.add(it) }
                     val label = labelParts.joinToString(" ")
 
-                    // Skip non-matching episodes before making the resolution POST
+                    // Skip non-matching episodes before making the resolution POST. Series players
+                    // list every season, so the season has to match too when the label has one.
                     val matchesEpisode = episodeNumber == null ||
                         Regex("""(?:^|\s)E0*${episodeNumber}(?:\s|$)""").containsMatchIn(label)
+                    val labelSeason = Regex("""(?:^|\s)S\s*(\d+)""").find(label)?.groupValues?.get(1)?.toIntOrNull()
+                    val matchesSeason = seasonNumber == null || labelSeason == null || labelSeason == seasonNumber
 
-                    if (matchesEpisode) {
+                    if (matchesEpisode && matchesSeason) {
                         val token = rawFile.replace("~", "").trimStart('/')
                         if (token.isNotEmpty() && seenTokens.add(token)) {
                             val finalUrl = hdbvPost("$origin/playlist/$token.txt", referer, csrfKey)?.trim()?.removeSurrounding("\"")
@@ -829,7 +830,7 @@ class PikashowProvider : MainAPI() {
                             "$prefix ${node.optString("title").replace("Season", "S", true)}".trim()
                         else -> prefix
                     }
-                    walkHdbvEntries(folder, childPrefix, csrfKey, referer, origin, out, seenTokens, episodeNumber)
+                    walkHdbvEntries(folder, childPrefix, csrfKey, referer, origin, out, seenTokens, episodeNumber, seasonNumber)
                 }
             }
         }

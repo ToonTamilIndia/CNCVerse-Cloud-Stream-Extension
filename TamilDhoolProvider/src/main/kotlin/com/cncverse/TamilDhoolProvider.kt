@@ -31,6 +31,7 @@ class TamilDhoolProvider : MainAPI() { // all providers must be an instance of M
     }
     
     private val cfInterceptor = CloudflareKiller()
+    private val BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     override var mainUrl = "https://www.tamildhool.tech"
     override var name = "TamilDhool"
     override val hasMainPage = true
@@ -44,7 +45,6 @@ class TamilDhoolProvider : MainAPI() { // all providers must be an instance of M
         "zee-tamil" to "Zee Tamil TV",
         "sun-tv" to "Sun TV",
         "vijay-tv" to "Vijay TV",
-        "kalaignar-tv" to "Kalaignar TV",
         "news-gossips" to "News Gossips TV",
     )
 
@@ -59,9 +59,12 @@ class TamilDhoolProvider : MainAPI() { // all providers must be an instance of M
     ): HomePageResponse {
         
         val query = request.data.format(page)
-        val document = app.post(
+        val document = app.get(
             "$mainUrl/$query/",
-            headers = mapOf("Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8"),
+            headers = mapOf(
+                "User-Agent" to BROWSER_UA,
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+            ),
             referer = "$mainUrl/",
             interceptor = cfInterceptor
         ).document
@@ -69,16 +72,21 @@ class TamilDhoolProvider : MainAPI() { // all providers must be an instance of M
             it.toSearchResult()
         }
 
-        return newHomePageResponse(arrayListOf(HomePageList(request.name, home, isHorizontalImages = true)), hasNext = true)
+        return newHomePageResponse(arrayListOf(HomePageList(request.name, home, isHorizontalImages = true)), hasNext = home.isNotEmpty())
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
         val title = this.selectFirst("section.entry-body > h3 > a")?.text()?.trim() ?: return null
         val href = fixUrl(this.selectFirst("section.entry-body > h3 > a")?.attr("href").toString())
-        val posterUrl = this.selectFirst("div.post-thumb > a > picture > img")?.attr("src")?: fixUrlNull(this.selectFirst("div.post-thumb > a > img")?.attr("src"))
+        val img = this.selectFirst("div.post-thumb img")
+        val posterUrl = fixUrlNull(
+            listOf("data-src", "data-lazy-src", "src").firstNotNullOfOrNull { attr ->
+                img?.attr(attr)?.takeIf { it.isNotBlank() }
+            } ?: this.selectFirst("div.post-thumb source")?.attr("srcset")?.substringBefore(" ")?.takeIf { it.isNotBlank() }
+        )
         return newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
             this.posterUrl = posterUrl
-            this.posterHeaders = mapOf("referer" to "$mainUrl/")
+            this.posterHeaders = mapOf("Referer" to "$mainUrl/", "User-Agent" to BROWSER_UA)
             this.quality = SearchQuality.HD
         }
     }
@@ -135,7 +143,7 @@ class TamilDhoolProvider : MainAPI() { // all providers must be an instance of M
 
         return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
             this.posterUrl = poster?.trim()
-            this.posterHeaders = mapOf("referer" to "$mainUrl/")
+            this.posterHeaders = mapOf("Referer" to "$mainUrl/", "User-Agent" to BROWSER_UA)
         }
     }
 

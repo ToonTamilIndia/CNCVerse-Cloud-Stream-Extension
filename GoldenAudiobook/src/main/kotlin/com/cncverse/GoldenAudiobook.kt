@@ -89,7 +89,8 @@ class GoldenAudiobook : MainAPI() { // all providers must be an instance of Main
     override suspend fun load(url: String): LoadResponse? {
         
 
-        val document = app.get(url).document
+        // Bookmarks saved before the domain move still point at goldenaudiobook.net
+        val document = app.get(url.replace("://goldenaudiobook.net", "://goldenaudiobooks.com")).document
 
         val title = document.selectFirst("h1")?.text()?.trim() ?: return null
 

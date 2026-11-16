@@ -18,7 +18,7 @@ import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
 
 class MoviezwapProvider : MainAPI() {
     // Using CORS proxy to bypass geo-blocks
-    override var mainUrl = "https://www.moviezwap.poker"
+    override var mainUrl = "https://www.moviezwap.land"
     override var name = "Moviezwap"
     override val hasMainPage = true
     override var lang = "te" // Telugu

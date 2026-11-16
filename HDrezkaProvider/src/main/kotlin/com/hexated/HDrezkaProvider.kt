@@ -368,8 +368,8 @@ class HDrezkaProvider : MainAPI() {
         data["favs"] = document.selectFirst("input#ctrl_favs")?.attr("value").toString()
         data["ref"] = url
 
+        val translators = document.select("ul#translators-list [data-translator_id]")
         return if (tvType == TvType.TvSeries) {
-            val translators = document.select("ul#translators-list li")
             if (translators.isNotEmpty()) {
                 translators.map { res ->
                     server.add(
@@ -427,7 +427,7 @@ class HDrezkaProvider : MainAPI() {
                 addTrailer(trailer)
             }
         } else {
-            document.select("ul#translators-list li").map { res ->
+            translators.map { res ->
                 server.add(
                     mapOf(
                         "translator_name" to res.text(),

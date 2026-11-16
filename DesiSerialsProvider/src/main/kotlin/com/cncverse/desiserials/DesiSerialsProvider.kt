@@ -4,6 +4,8 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Element
+import java.util.Collections
+import java.util.Locale
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.getAndUnpack
@@ -17,6 +19,7 @@ import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
 class DesiSerialsProvider : MainAPI() {
     companion object {
         var context: android.content.Context? = null
+        private const val DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 
     override var mainUrl = "https://www.desi-serials.to"
@@ -39,6 +42,13 @@ class DesiSerialsProvider : MainAPI() {
         "star-bharat" to "Star Bharat"
     )
 
+    private val browserHeaders = mapOf(
+        "User-Agent" to DESKTOP_UA,
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
+    )
+
+    private val posterHeaders get() = mapOf("Referer" to "$mainUrl/", "User-Agent" to DESKTOP_UA)
+
     override suspend fun getMainPage(
         page: Int,
         request: MainPageRequest
@@ -49,21 +59,16 @@ class DesiSerialsProvider : MainAPI() {
             "$mainUrl/${request.data}/page/$page/"
         }
 
-        // Add typical browser headers to prevent OkHttp from getting blocked
-        val document = app.get(url, headers = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
-        )).document
-        
+        val document = app.get(url, headers = browserHeaders).document
+
         android.util.Log.d("DesiSerials", "getMainPage url=$url title=${document.title()}")
-        
-        // Use a more specific article selector to avoid matching the main page container
-        val posts = document.select("article.type-post, article.post-grid, .porto-sicon-wrapper, li.cat-item")
+
+        val posts = document.select("article.type-post, article.post-grid, .porto-sicon-wrapper")
         android.util.Log.d("DesiSerials", "getMainPage posts=${posts.size}")
-        
+
         val home = posts.mapNotNull {
             it.toSearchResult()
-        }.toMutableList()
+        }.filter { !it.posterUrl.isNullOrBlank() }.toMutableList()
         android.util.Log.d("DesiSerials", "getMainPage home=${home.size}")
 
         if (home.isEmpty()) {
@@ -81,77 +86,93 @@ class DesiSerialsProvider : MainAPI() {
         val titleElement = this.selectFirst("h3.thumb-info-inner a, h2.entry-title a, h5 a.porto-sicon-title-link, h3.porto-post-title a") ?: this.selectFirst("a") ?: return null
         val title = titleElement.text().trim().takeIf { it.isNotBlank() } ?: titleElement.attr("title").trim().takeIf { it.isNotBlank() } ?: "Unknown Series"
         val href = fixUrl(titleElement.attr("href"))
-        
+
         val imgElement = this.selectFirst("div.post-image img, span.post-image img, .porto-sicon-img img") ?: this.selectFirst("img")
-        var posterUrl = imgElement?.attr("data-oi")
-        if (posterUrl.isNullOrBlank()) {
-            posterUrl = imgElement?.attr("data-src")
-        }
-        if (posterUrl.isNullOrBlank()) {
-            posterUrl = imgElement?.attr("src")
-        }
-        posterUrl = fixUrlNull(posterUrl)
+        val posterUrl = fixUrlNull(
+            listOf("data-oi", "data-src", "data-lazy-src", "data-original", "src")
+                .firstNotNullOfOrNull { attr -> imgElement?.attr(attr)?.takeIf { it.isNotBlank() } }
+                ?: imgElement?.attr("srcset")?.substringBefore(" ")?.takeIf { it.isNotBlank() }
+        )
 
         return newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
             this.posterUrl = posterUrl
-            this.posterHeaders = mapOf("referer" to "$mainUrl/")
+            this.posterHeaders = this@DesiSerialsProvider.posterHeaders
         }
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        
-        val encodedQuery = query.replace(" ", "+").lowercase()
-        val searchUrl = "$mainUrl/?s=$encodedQuery"
-        
-        val document = app.get(searchUrl, headers = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
-        )).document
-        
-        // Search results use div.post-item with h3.porto-post-title
-        val results = document.select("div.post-item, article.type-post, article.post-grid, article.post")
-        
-        return results.mapNotNull {
-            it.toSearchResult()
+        val queryLower = query.trim().lowercase(Locale.ROOT)
+        val seenUrls = Collections.synchronizedSet(LinkedHashSet<String>())
+        val results = Collections.synchronizedList(mutableListOf<SearchResponse>())
+
+        // Site search misses most show index pages, so match titles on every home section too
+        mainPage.map { it.data }.amap { slug ->
+            try {
+                val document = app.get("$mainUrl/$slug/", headers = browserHeaders).document
+                document.select("article.type-post, article.post-grid, .porto-sicon-wrapper, li.cat-item")
+                    .mapNotNull { it.toSearchResult() }
+                    .forEach { item ->
+                        if (item.name.lowercase(Locale.ROOT).contains(queryLower) && seenUrls.add(item.url)) {
+                            results.add(item)
+                        }
+                    }
+            } catch (e: Exception) {
+                android.util.Log.d("DesiSerials", "search home page fetch error for slug=$slug: ${e.message}")
+            }
         }
+
+        try {
+            val encodedQuery = query.trim().replace(" ", "+").lowercase(Locale.ROOT)
+            val document = app.get("$mainUrl/?s=$encodedQuery", headers = browserHeaders).document
+            document.select("div.post-item, article.type-post, article.post-grid, article.post")
+                .mapNotNull { it.toSearchResult() }
+                .forEach { item ->
+                    if (seenUrls.add(item.url)) results.add(item)
+                }
+        } catch (e: Exception) {
+            android.util.Log.d("DesiSerials", "search endpoint error: ${e.message}")
+        }
+        return results
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        
-        val doc = app.get(url, headers = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
-        )).document
-        
-        val title = doc.selectFirst("h1.page-title")?.text()?.trim() 
+        val doc = app.get(url, headers = browserHeaders).document
+
+        val title = doc.selectFirst("h1.page-title")?.text()?.trim()
             ?: doc.selectFirst("h2.heading-primary")?.text()?.trim()
             ?: doc.selectFirst("h1.entry-title")?.text()?.trim()
             ?: return null
 
-        val posterRegex = Regex("(https?:\\/\\/(www\\.)?[-a-zA-Z0-9@:%._\\+~#=]{1,256}\\.[a-zA-Z0-9()]{1,6}\\b([-a-zA-Z0-9()@:%_\\+.~#?&\\/\\/=]*jpg))")
-        val posterRaw = doc.selectFirst("div.page-image img")?.attr("src") ?: doc.html()
+        val posterRegex = Regex("(https?:\\/\\/(www\\.)?[-a-zA-Z0-9@:%._\\+~#=]{1,256}\\.[a-zA-Z0-9()]{1,6}\\b([-a-zA-Z0-9()@:%_\\+.~#?&\\/\\/=]*(?:jpg|jpeg|png|webp)))")
+        val pageImage = doc.selectFirst("div.page-image img")
+        val posterRaw = listOf("data-oi", "data-src", "src")
+            .firstNotNullOfOrNull { attr -> pageImage?.attr(attr)?.takeIf { it.isNotBlank() } }
+            ?: doc.selectFirst("meta[property=og:image]")?.attr("content")?.takeIf { it.isNotBlank() }
+            ?: doc.html()
         val poster = posterRegex.find(posterRaw)?.value?.trim()
 
-        val episodes = mutableListOf<Episode>()
-        
-        // 1. Check if it's a list of episodes (Index page)
-        val posts = doc.select("article.type-post")
-        posts.forEach { element ->
-            val a = element.selectFirst("h3.thumb-info-inner a, h2.entry-title a")
-            if (a != null) {
+        // Show index pages list episodes across numbered pages; fetch them all
+        val lastPage = doc.select("a.page-numbers").mapNotNull { it.text().toIntOrNull() }.maxOrNull() ?: 1
+        val pageUrls = if (lastPage > 1) {
+            (1..lastPage).map { if (it == 1) url else "${url.trimEnd('/')}/page/$it/" }
+        } else {
+            listOf(url)
+        }
+        val episodes = pageUrls.amap { pUrl ->
+            val pDoc = if (pUrl == url) doc else app.get(pUrl, headers = browserHeaders).document
+            pDoc.select("article.type-post").mapNotNull { element ->
+                val a = element.selectFirst("h3.thumb-info-inner a, h2.entry-title a") ?: return@mapNotNull null
                 val epHref = fixUrl(a.attr("href"))
+                if (epHref == url) return@mapNotNull null
                 val epTitle = a.text().trim()
-                if (epHref != url) {
-                    episodes.add(newEpisode(data = epHref) {
-                        name = epTitle
-                        this.posterUrl = poster
-                    })
+                newEpisode(data = epHref) {
+                    name = epTitle
+                    this.posterUrl = poster
                 }
             }
-        }
+        }.flatten().toMutableList()
 
-        // 2. Single episode page - use the URL itself as the episode data
-        //    loadLinks will handle extracting iframes and a[href] links from the page
+        // Single episode page - loadLinks extracts iframes and a[href] links from it
         if (episodes.isEmpty()) {
             episodes.add(
                 newEpisode(data = url) {
@@ -165,7 +186,7 @@ class DesiSerialsProvider : MainAPI() {
 
         return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes.reversed()) {
             this.posterUrl = poster?.trim()
-            this.posterHeaders = mapOf("referer" to "$mainUrl/")
+            this.posterHeaders = this@DesiSerialsProvider.posterHeaders
         }
     }
 

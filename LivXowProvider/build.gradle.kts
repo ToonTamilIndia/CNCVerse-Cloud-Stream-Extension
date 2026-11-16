@@ -15,6 +15,11 @@ android {
         buildConfigField("String", "LIVXOW_AES_IV", "\"kN7m5Kl1pN5nk4xK\"")
         buildConfigField("String", "LIVXOW_SHUFFLED_ALPHABET", "\"fFgGjJkKaApPbBmMoOzZeEnNcCdDrRqQtTvVuUxXhHiIwWyYlLsS\"")
         buildConfigField("String", "LIVXOW_STANDARD_ALPHABET", "\"aAbBcCdDeEfFgGhHiIjJkKlLmMnNoOpPqQrRsStTuUvVwWxXyYzZ\"")
+        // Firebase Remote Config identifiers used by LivXowFirebaseFetcher to
+        // resolve the API base URL.
+        buildConfigField("String", "LIVXOW_FIREBASE_API_KEY", "\"AIzaSyBIfjXqlm2QLLctnTUQUNK9j9Kf2ybS7yw\"")
+        buildConfigField("String", "LIVXOW_FIREBASE_APP_ID", "\"1:459539398637:android:96270124df48971af131e4\"")
+        buildConfigField("String", "LIVXOW_FIREBASE_PROJECT_NUMBER", "\"459539398637\"")
     }
 }
 

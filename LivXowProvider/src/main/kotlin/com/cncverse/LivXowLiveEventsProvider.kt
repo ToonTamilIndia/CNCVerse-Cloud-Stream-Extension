@@ -1,4 +1,4 @@
-package com.cncverse
+﻿package com.cncverse
 
 import android.os.Handler
 import android.os.Looper
@@ -27,16 +27,23 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import com.lagradost.cloudstream3.APIHolder.unixTime
+import com.lagradost.cloudstream3.ui.settings.Globals.TV
+import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
+import android.content.Intent
+import android.net.Uri
 
-class LivXowLiveEventsProvider(private val customName: String = "⚡LivXow Live Events", val customCatLink: String? = null) : MainAPI() {
+class LivXowLiveEventsProvider(
+    override var name: String = "⚡LivXow Live Events",
+    val customCatLink: String? = null
+) : MainAPI() {
     companion object {
         var context: android.content.Context? = null
-        private var cachedWebUrl: String? = null
         private const val DEFAULT_WEB_URL = "https://welalagaa.site"
+        private val webUrlValue = ExpiringRemoteValue()
     }
 
     override var mainUrl = DEFAULT_WEB_URL
-    override var name = customName
     override var lang = "ta"
     override val hasMainPage = true
     override val hasChromecastSupport = true
@@ -46,28 +53,20 @@ class LivXowLiveEventsProvider(private val customName: String = "⚡LivXow Live 
             OkHttpClient.Builder()
                     .connectTimeout(30, TimeUnit.SECONDS)
                     .readTimeout(30, TimeUnit.SECONDS)
+                    .addInterceptor(StaleDomainInterceptor(webUrlValue))
                     .build()
 
     /**
-     * Gets the web URL from Firebase Remote Config
+     * Gets the web URL from Firebase Remote Config (cached with expiry)
      * Falls back to default URL if Firebase fetch fails
      */
     private suspend fun getWebUrl(): String {
-        // Return cached URL if available
-        cachedWebUrl?.let { return it }
-        
-        // Try to fetch from Firebase Remote Config
-        val firebaseUrl = LivXowFirebaseFetcher.getBaseApiUrl()
-        if (!firebaseUrl.isNullOrBlank()) {
-            cachedWebUrl = firebaseUrl
-            mainUrl = cachedWebUrl!!
-            return cachedWebUrl!!
-        }
-        
-        // Fall back to default URL
-        cachedWebUrl = DEFAULT_WEB_URL
-        mainUrl = DEFAULT_WEB_URL
-        return DEFAULT_WEB_URL
+        val url = webUrlValue.get(
+            fetch = { LivXowFirebaseFetcher.getBaseApiUrl() },
+            fallback = { DEFAULT_WEB_URL }
+        )
+        mainUrl = url
+        return url
     }
 
     // Data classes for stream response from /channels/{slug}.txt
@@ -80,12 +79,12 @@ class LivXowLiveEventsProvider(private val customName: String = "⚡LivXow Live 
 
     data class StreamUrl(
             val name: String?, // Server name
-            val link: String?, // Direct stream URL
+            val link: String?, // Direct stream URL (may contain | for headers)
             val url: String?,  // Direct stream URL (alt)
             val stream_url: String?, // Direct stream URL (alt)
             val scheme: Int?, // 0 = direct link
-            val api: String?, // Additional API info
-            val drm: String?, // DRM key
+            val api: String?, // DRM key or additional API info
+            val drm: String?, // DRM key "kid:key"
             val tokenApi: String?, // JSON string with token fetching instructions
             val linkTag: String?, // tag from JSON (e.g., "HD")
             val colorHex: String?, // color code from JSON (e.g., "#08C7D6")
@@ -123,7 +122,7 @@ class LivXowLiveEventsProvider(private val customName: String = "⚡LivXow Live 
                         !eventInfo.teamA.isNullOrBlank() &&
                         !eventInfo.teamB.isNullOrBlank()
         ) {
-            if (eventInfo.teamA == eventInfo.teamB) {
+            if (isSameTeam(eventInfo.teamA, eventInfo.teamB)) {
                 // Same team means it's a show/event, not a match
                 eventInfo.teamA
             } else {
@@ -201,8 +200,14 @@ class LivXowLiveEventsProvider(private val customName: String = "⚡LivXow Live 
         }
     }
 
+    private fun isSameTeam(a: String?, b: String?): Boolean {
+        if (a.isNullOrBlank() || b.isNullOrBlank()) return false
+        return a.trim().equals(b.trim(), ignoreCase = true)
+    }
+
     /**
-     * Generate a match card poster URL using the CNCVerse API
+     * Generate a match card poster URL using the CNCVerse card API
+     * Single-team events (teamA == teamB) render as a show card without teamB
      */
     private fun generateMatchCardUrl(event: LiveEventData): String {
         val eventInfo = event.eventInfo
@@ -210,8 +215,11 @@ class LivXowLiveEventsProvider(private val customName: String = "⚡LivXow Live 
         val title = java.net.URLEncoder.encode(eventInfo?.eventName ?: event.title, "UTF-8")
         val teamA = java.net.URLEncoder.encode(eventInfo?.teamA ?: "Team A", "UTF-8")
         val teamB = java.net.URLEncoder.encode(eventInfo?.teamB ?: "Team B", "UTF-8")
-        val teamAImg = eventInfo?.teamAFlag ?: ""
-        val teamBImg = eventInfo?.teamBFlag ?: ""
+        val sameTeams = isSameTeam(eventInfo?.teamA, eventInfo?.teamB)
+        val teamAImg = eventInfo?.teamAFlag?.takeIf { it.isNotBlank() }
+            ?: (if (sameTeams) eventInfo?.teamBFlag else null)
+            ?: ""
+        val teamBImg = if (sameTeams) "" else eventInfo?.teamBFlag ?: ""
         val eventLogo = eventInfo?.eventLogo ?: ""
         val isLive = isEventLive(event)
         val isEnded = isEventEnded(event)
@@ -229,10 +237,10 @@ class LivXowLiveEventsProvider(private val customName: String = "⚡LivXow Live 
         }
         
         return buildString {
-            append("https://live-card-png.cricify.workers.dev/?")
+            append("https://card.cncverse.dpdns.org/?")
             append("title=$title")
             append("&teamA=$teamA")
-            append("&teamB=$teamB")
+            if (!sameTeams) append("&teamB=$teamB")
             if (teamAImg.isNotBlank()) append("&teamAImg=$teamAImg")
             if (teamBImg.isNotBlank()) append("&teamBImg=$teamBImg")
             if (eventLogo.isNotBlank()) append("&eventLogo=$eventLogo")
@@ -245,6 +253,9 @@ class LivXowLiveEventsProvider(private val customName: String = "⚡LivXow Live 
 
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        webUrlValue.reset()
+        LivXowProviderManager.refreshFromFirebase()
+
         val events = if (customCatLink != null) {
             LivXowProviderManager.fetchCustomEvents(customCatLink)
         } else {
@@ -280,13 +291,17 @@ class LivXowLiveEventsProvider(private val customName: String = "⚡LivXow Live 
                                                 status.contains("✅") -> 2
                                                 else -> 3
                                             }
-                                        }.thenBy { event ->
+                                        }.thenBy { event: LiveEventData ->
                                             try {
-                                                val info = event.eventInfo ?: return@thenBy Long.MAX_VALUE
-                                                val startTime = info.startTime ?: return@thenBy Long.MAX_VALUE
-                                                val fmt = java.text.SimpleDateFormat("yyyy/MM/dd HH:mm:ss Z", java.util.Locale.US)
-                                                fmt.parse(startTime)?.time ?: Long.MAX_VALUE
-                                            } catch (e: Exception) { Long.MAX_VALUE }
+                                                val info = event.eventInfo
+                                                if (info == null || info.startTime == null) Long.MAX_VALUE
+                                                else {
+                                                    val fmt = SimpleDateFormat("yyyy/MM/dd HH:mm:ss Z", Locale.US)
+                                                    fmt.parse(info.startTime)?.time ?: Long.MAX_VALUE
+                                                }
+                                            } catch (e: Exception) {
+                                                Long.MAX_VALUE
+                                            }
                                         }
                                     )
                                     .map { event ->
@@ -297,7 +312,9 @@ class LivXowLiveEventsProvider(private val customName: String = "⚡LivXow Live 
                                                 else displayTitle
 
                                         // Use match card API for poster
-                                        val posterUrl = generateMatchCardUrl(event)
+                                        val posterUrl =
+                                                if (event.cat == "Custom" && !event.image.isNullOrBlank()) event.image
+                                                else generateMatchCardUrl(event)
 
                                         val loadData =
                                                 LiveEventLoadData(
@@ -322,11 +339,20 @@ class LivXowLiveEventsProvider(private val customName: String = "⚡LivXow Live 
                                     isHorizontalImages = true
                             )
                         }
+                        .sortedBy { list ->
+                            // Sort categories: Live events first, then by category name
+                            when {
+                                list.name.contains("Cricket", ignoreCase = true) -> 0
+                                list.name.contains("Football", ignoreCase = true) -> 1
+                                list.name.contains("Basketball", ignoreCase = true) -> 2
+                                else -> 10
+                            }
+                        }
 
         return newHomePageResponse(homePageLists, hasNext = false)
     }
 
-    override suspend fun search(query: String): List<SearchResponse> {      
+    override suspend fun search(query: String): List<SearchResponse> {
         
         val events = LivXowProviderManager.fetchLiveEvents()
 
@@ -408,157 +434,191 @@ class LivXowLiveEventsProvider(private val customName: String = "⚡LivXow Live 
     ): Boolean {
         val loadData = parseJson<LiveEventLoadData>(data)
 
-        // Fetch actual stream URLs from the server using the channel slug
+        // Fetch stream URLs from /channels/{slug}.txt
         val streamResponse = fetchChannelStreams(loadData.slug)
-        val streams = streamResponse?.streamUrls ?: emptyList()
-
-        if (streams.isEmpty()) {
-            // Fall back to legacy format.webLink
-            for (format in loadData.formats) {
-                val serverName = format.title ?: "Server"
-                val streamUrl = format.webLink ?: continue
-                if (streamUrl.isBlank()) continue
-                emitStreamLink(streamUrl, serverName, callback)
-            }
-            return true
+        println("SKTech: Fetched stream response for slug ${loadData.slug}: ${streamResponse} streams")
+        if (streamResponse?.streamUrls.isNullOrEmpty()) {
+            return false
         }
 
-        for (stream in streams) {
+        streamResponse.streamUrls.forEach { stream ->
             val serverName = stream.name ?: "Server"
-            val streamLink = stream.streamUrl
-
-            if (stream.tokenApi != null && stream.tokenApi.isNotBlank()) {
-                // Resolve tokenApi to get actual stream URL
+            
+            // Check if we need to fetch URL from tokenApi
+            val streamLink = if (!stream.tokenApi.isNullOrBlank() && stream.streamUrl.isNullOrBlank()) {
                 try {
+                    // Parse tokenApi config and fetch the actual stream URL
                     val tokenConfig = parseJson<TokenApiConfig>(stream.tokenApi)
-                    val resolvedUrl = fetchStreamFromTokenApi(tokenConfig)
-                    if (!resolvedUrl.isNullOrBlank()) {
-                        val (url, parsedHeaders) = parseStreamLink(resolvedUrl)
-                        val allHeaders = (stream.headers ?: emptyMap()).toMutableMap()
-                        allHeaders.putAll(parsedHeaders)
-                        emitStreamLink(url, serverName, callback, allHeaders, stream.drm)
-                    }
+                    fetchStreamFromTokenApi(tokenConfig) ?: return@forEach
                 } catch (e: Exception) {
-                    println("LivXow: Failed to resolve tokenApi for $serverName: ${e.message}")
+                    println("SKTech: Failed to parse tokenApi: ${e.message}")
+                    return@forEach
                 }
-            } else if (!streamLink.isNullOrBlank()) {
-                val (url, parsedHeaders) = parseStreamLink(streamLink)
-                val allHeaders = (stream.headers ?: emptyMap()).toMutableMap()
-                allHeaders.putAll(parsedHeaders)
-                emitStreamLink(url, serverName, callback, allHeaders, stream.drm)
+            } else {
+                stream.streamUrl ?: return@forEach
+            }
+
+            // Parse the link - may contain headers after |; these override the stream's own headers
+            val (url, parsedHeaders) = parseStreamLink(streamLink)
+            val headers = stream.headers?.toMutableMap() ?: mutableMapOf()
+            headers.putAll(parsedHeaders)
+
+            if (url.isBlank()) return@forEach
+
+            try {
+                // Determine link type based on URL content
+                when {
+                    url.contains(".mpd") -> {
+                        // DASH/MPD stream
+                        val drmInfo = (stream.drm ?: stream.api)?.split(":")
+                        if (drmInfo != null && drmInfo.size == 2) {
+                            // MPD with DRM keys
+                            val drmKidBytes =
+                                    drmInfo[0]
+                                            .replace("-", "")
+                                            .chunked(2)
+                                            .map { it.toInt(16).toByte() }
+                                            .toByteArray()
+                            val drmKidBase64 =
+                                    Base64.encodeToString(
+                                            drmKidBytes,
+                                            Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP
+                                    )
+                            val drmKeyBytes =
+                                    drmInfo[1]
+                                            .replace("-", "")
+                                            .chunked(2)
+                                            .map { it.toInt(16).toByte() }
+                                            .toByteArray()
+                            val drmKeyBase64 = Base64.encodeToString(
+                                drmKeyBytes,
+                                Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP
+                            )
+                            callback.invoke(
+                                    newDrmExtractorLink(
+                                            this.name,
+                                            serverName,
+                                            url,
+                                            INFER_TYPE,
+                                            CLEARKEY_UUID
+                                    ) {
+                                        this.quality = Qualities.Unknown.value
+                                        this.key = drmKeyBase64
+                                        this.kid = drmKidBase64
+                                        if (headers.isNotEmpty()) {
+                                            this.headers = headers
+                                        }
+                                    }
+                            )
+                        } else {
+                            // MPD without keys - regular dash
+                            callback.invoke(
+                                    newExtractorLink(
+                                            source = this.name,
+                                            name = serverName,
+                                            url = url,
+                                            type = ExtractorLinkType.DASH
+                                    ) {
+                                        this.quality = Qualities.Unknown.value
+                                        if (headers.isNotEmpty()) {
+                                            this.headers = headers
+                                        }
+                                    }
+                            )
+                        }
+                    }
+                    else -> {
+                        // M3U8 or other types
+                        val finalHeaders = headers.toMutableMap()
+                        if (!finalHeaders.containsKey("User-Agent")) {
+                            finalHeaders["User-Agent"] = "Mozilla/5.0 (Linux; Android 10; Pixel 3 XL) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
+                        }
+                        val linkType =
+                                if (url.contains(".m3u") || url.contains(".m3u8")) ExtractorLinkType.M3U8
+                                else INFER_TYPE
+                        callback.invoke(
+                                newExtractorLink(
+                                        source = this.name,
+                                        name = serverName,
+                                        url = url,
+                                        type = linkType
+                                ) {
+                                    this.quality = Qualities.Unknown.value
+                                    if (finalHeaders.isNotEmpty()) {
+                                        this.headers = finalHeaders
+                                    }
+                                }
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
         }
 
         return true
     }
 
-    private suspend fun emitStreamLink(
-            url: String,
-            name: String,
-            callback: (ExtractorLink) -> Unit,
-            headers: Map<String, String> = emptyMap(),
-            drm: String? = null
-    ) {
-        if (url.isBlank()) return
-        val linkType = when {
-            url.contains(".mpd") -> ExtractorLinkType.DASH
-            url.contains(".m3u8") -> ExtractorLinkType.M3U8
-            else -> ExtractorLinkType.M3U8
-        }
-        val finalHeaders = headers.toMutableMap()
-        if (!finalHeaders.containsKey("User-Agent")) {
-            finalHeaders["User-Agent"] = "Mozilla/5.0 (Linux; Android 10; Pixel 3 XL) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
-        }
-        callback.invoke(
-            newExtractorLink(
-                source = this.name,
-                name = name,
-                url = url,
-                type = linkType
-            ) {
-                this.quality = Qualities.Unknown.value
-                if (finalHeaders.isNotEmpty()) {
-                    this.headers = finalHeaders
-                }
-            }
-        )
-    }
-
-    /**
-     * Fetches actual stream URLs for a given channel slug.
-     * Endpoint: <webUrl>/<slug>.txt
-     */
+    /** Fetches stream URLs from /channels/{slug}.txt using SKLive decryption */
     private suspend fun fetchChannelStreams(slug: String): ChannelStreamResponse? {
         return withContext(Dispatchers.IO) {
             try {
+                // Get the web URL from Firebase Remote Config (or use cached/default)
                 val webUrl = getWebUrl()
                 val url = "$webUrl/$slug.txt"
-                println("LivXow: Fetching channel streams from $url")
 
-                val request = Request.Builder()
-                    .url(url)
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                    .build()
+                val request =
+                        Request.Builder()
+                                .url(url)
+                                .header(
+                                        "User-Agent",
+                                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                                )
+                                .build()
 
                 val response = client.newCall(request).execute()
-                if (!response.isSuccessful) {
-                    println("LivXow: HTTP ${response.code} fetching channel $slug")
-                    return@withContext null
-                }
-
-                val encrypted = response.body.string()
-                if (encrypted.isBlank()) return@withContext null
-
-                val decrypted = LivXowCryptoUtils.decrypt(encrypted.trim())
-                if (decrypted.isNullOrBlank()) {
-                    println("LivXow: Decryption failed for channel $slug")
-                    return@withContext null
-                }
-
-                val rawList = parseJson<List<Map<String, Any>>>(decrypted)
-                val streamUrls = mutableListOf<StreamUrl>()
-
-                for (item in rawList) {
-                    when {
-                        item.containsKey("channel") -> {
-                            val channelStr = item["channel"] as? String
-                            if (!channelStr.isNullOrBlank()) {
-                                try {
-                                    val streamUrl = parseJson<StreamUrl>(channelStr)
-                                    streamUrls.add(streamUrl)
-                                } catch (e: Exception) {
-                                    println("LivXow: Failed to parse channel stream: ${e.message}")
+                if (response.isSuccessful) {
+                    val encryptedData = response.body.string()
+                    if (!encryptedData.isNullOrBlank()) {
+                        println("SKTech: Fetched encrypted channel data for $slug: ${encryptedData.length} chars")
+                        
+                        // Use SKLive decryption
+                        val decryptedData = LivXowCryptoUtils.decrypt(encryptedData.trim())
+                        if (!decryptedData.isNullOrBlank()) {
+                            println("SKTech: Decrypted channel data successfully")
+                            println("SKTech: Decrypted data: ${decryptedData.take(200)}")
+                            
+                            // Items are either {"channel": "<json>"}, {"stream": "<json>"} or a flat StreamUrl object
+                            return@withContext try {
+                                val streamUrls = parseJson<List<Map<String, Any>>>(decryptedData).map { item ->
+                                    when {
+                                        item.containsKey("channel") -> parseJson<StreamUrl>(item["channel"].toString())
+                                        item.containsKey("stream") -> parseJson<StreamUrl>(item["stream"].toString())
+                                        else -> parseJson<StreamUrl>(item.toJson())
+                                    }
                                 }
-                            }
-                        }
-                        item.containsKey("stream") -> {
-                            val streamStr = item["stream"] as? String
-                            if (!streamStr.isNullOrBlank()) {
-                                try {
-                                    val streamUrl = parseJson<StreamUrl>(streamStr)
-                                    streamUrls.add(streamUrl)
-                                } catch (e: Exception) {
-                                    println("LivXow: Failed to parse stream: ${e.message}")
-                                }
-                            }
-                        }
-                        else -> {
-                            try {
-                                val streamUrl = parseJson<StreamUrl>(item.toJson())
-                                streamUrls.add(streamUrl)
+                                ChannelStreamResponse(
+                                    streamUrls = streamUrls,
+                                    related = null,
+                                    prevChannel = null,
+                                    nextChannel = null
+                                )
                             } catch (e: Exception) {
-                                println("LivXow: Failed to parse item as stream: ${e.message}")
+                                println("SKTech: Failed to parse stream URLs: ${e.message}")
+                                null
                             }
+                        } else {
+                            println("SKTech: Failed to decrypt channel data for $slug")
                         }
                     }
+                } else {
+                    println("SKTech: HTTP error ${response.code} fetching channel $slug")
                 }
-
-                ChannelStreamResponse(streamUrls, null, null, null)
             } catch (e: Exception) {
-                println("LivXow: Exception in fetchChannelStreams: ${e.message}")
+                println("SKTech: Exception fetching channel streams: ${e.message}")
                 e.printStackTrace()
-                null
             }
+            null
         }
     }
 

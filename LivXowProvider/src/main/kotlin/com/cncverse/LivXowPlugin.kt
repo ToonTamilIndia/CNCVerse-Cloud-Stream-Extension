@@ -29,9 +29,9 @@ class LivXowPlugin : Plugin() {
         }
 
         selectedProviders.forEach { provider ->
-            val title = provider["title"] as String
-            val catLink = provider["catLink"] as String
+            val title = provider["title"] as? String ?: return@forEach
             val type = provider["type"] as? String ?: "m3u"
+            val catLink = provider["catLink"] as? String ?: return@forEach
             val displayTitle = "📺 $title"
             if (type == "custom") {
                 registerMainAPI(LivXowLiveEventsProvider(displayTitle, catLink))

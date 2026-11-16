@@ -11,7 +11,22 @@ data class ProviderData(
     val id: Int,
     val title: String,
     val image: String,
-    val catLink: String?
+    val catLink: String?,
+    val type: String? = null
+)
+
+// Custom category files: [{"channel": "<double-encoded JSON>"}, ...]
+data class CricifyChannelData(
+    val name: String?,
+    val logo: String?,
+    val visible: Boolean?,
+    val links: String?,
+    val link_names: List<String>?,
+    val is_playlist: Boolean?
+)
+
+data class CricifyChannelWrapper(
+    val channel: String = ""
 )
 
 // Data classes for Live Events
@@ -48,15 +63,28 @@ data class LiveEventFormat(
 object ProviderManager {
     // Default fallback URL (will be replaced by Firebase Remote Config)
     private const val DEFAULT_BASE_URL = "https://cfymarkscanjiostar80.top"
-    
-    // Cached base URL from Firebase
-    private var cachedBaseUrl: String? = null
-    
+
+    private val baseUrlValue = ExpiringRemoteValue()
+
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
+        .addInterceptor(StaleDomainInterceptor(baseUrlValue))
         .build()
-    
+
+    fun refreshFromFirebase() {
+        baseUrlValue.reset()
+    }
+
+    /**
+     * Gets the base URL from Firebase Remote Config (cached with expiry)
+     * Falls back to default URL if Firebase fetch fails
+     */
+    suspend fun getBaseUrl(): String = baseUrlValue.get(
+        fetch = { FirebaseRemoteConfigFetcher.getProviderApiUrl()?.trimEnd('/') },
+        fallback = { DEFAULT_BASE_URL }
+    )
+
     // Fallback providers (current static list)
     private val fallbackProviders = listOf(
         mapOf("id" to 13, "title" to "TATA PLAY", "image" to "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQz_qYe3Y4S5bXXVlPtXQnqtAkLw1-no57QHhPyMgWE0SQmxujzHxZKiDs&s=10", "catLink" to "https://hotstarlive.delta-cloud.workers.dev/?token=240bb9-374e2e-3c13f0-4a7xz5"),
@@ -126,26 +154,6 @@ object ProviderManager {
     )
     
     /**
-     * Gets the base URL from Firebase Remote Config
-     * Falls back to default URL if Firebase fetch fails
-     */
-    suspend fun getBaseUrl(): String {
-        // Return cached URL if available
-        cachedBaseUrl?.let { return it }
-        
-        // Try to fetch from Firebase Remote Config
-        val firebaseUrl = FirebaseRemoteConfigFetcher.getProviderApiUrl()
-        if (!firebaseUrl.isNullOrBlank()) {
-            cachedBaseUrl = firebaseUrl.trimEnd('/')
-            return cachedBaseUrl!!
-        }
-        
-        // Fall back to default URL
-        cachedBaseUrl = DEFAULT_BASE_URL
-        return DEFAULT_BASE_URL
-    }
-    
-    /**
      * Gets the providers URL by fetching from Firebase Remote Config first
      * Falls back to default URL if Firebase fetch fails
      */
@@ -187,14 +195,12 @@ object ProviderManager {
                                         "id" to provider.id,
                                         "title" to provider.title,
                                         "image" to provider.image,
-                                        "catLink" to provider.catLink!!
+                                        "catLink" to provider.catLink!!,
+                                        "type" to (provider.type ?: "custom")
                                     )
-                                } ?: fallbackProviders
-                        } else {
+                                }
                         }
-                    } else {
                     }
-                } else {
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -261,7 +267,7 @@ object ProviderManager {
                                         id = index + 1,
                                         title = channelData.name ?: "Unknown Channel",
                                         image = channelData.logo,
-                                        slug = links.substringBeforeLast(".", ""),
+                                        slug = links.substringBeforeLast("."),
                                         cat = "Custom",
                                         eventInfo = LiveEventInfo(
                                             null, null, null, null, null,
@@ -269,14 +275,11 @@ object ProviderManager {
                                             null, null, null
                                         ),
                                         publish = 1,
-                                        formats = if (!channelData.link_names.isNullOrEmpty()) {
-                                            channelData.link_names.map { name ->
-                                                LiveEventFormat(title = name, webLink = links)
-                                            }
-                                        } else {
-                                            links.split(", ").mapIndexed { i, link ->
-                                                LiveEventFormat(title = "Link ${i + 1}", webLink = link)
-                                            }
+                                        formats = links.split(", ").mapIndexed { i, link ->
+                                            LiveEventFormat(
+                                                title = channelData.link_names?.getOrNull(i) ?: "Link ${i + 1}",
+                                                webLink = link
+                                            )
                                         }
                                     )
                                 } catch (e: Exception) {

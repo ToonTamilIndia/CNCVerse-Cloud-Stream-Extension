@@ -40,8 +40,8 @@ data class LivXowEvent(
     // Visibility
     val visible: Boolean?    = null,
     val priority: Int?       = null,
-    // Links meta
-    val link_names: List<Map<String, String>>? = null
+    // Links meta — either plain names or {"name": ...} objects
+    val link_names: List<Any>? = null
 ) {
     /** Human-readable display name: "TeamA vs TeamB" or eventName. */
     val displayName: String get() {
@@ -65,6 +65,16 @@ data class LivXowEvent(
     /** Converts DD/MM/YYYY + HH:mm:ss to the format expected by SimpleDateFormat in LiveEventsProvider. */
     fun startTimeString(): String? = toIsoString(date, time)
     fun endTimeString(): String?   = toIsoString(end_date, end_time)
+
+    /** Server names from [link_names] (plain strings or {"name": ...} objects). */
+    fun linkFormats(): List<LiveEventFormat> = link_names?.mapNotNull { item ->
+        val name = when (item) {
+            is Map<*, *> -> item["name"] as? String
+            is String -> item
+            else -> null
+        }
+        name?.let { LiveEventFormat(title = it, webLink = null) }
+    } ?: emptyList()
 
     companion object {
         /** Converts "DD/MM/YYYY" + "HH:mm:ss" → "YYYY/MM/DD HH:mm:ss +0000" */
@@ -130,6 +140,25 @@ data class LivXowCategoryData(
     val api: String?      = null
 )
 
+/**
+ * Outer wrapper in custom category files — either a "channel" or a "highlight"
+ * field, each a double-encoded JSON string.
+ */
+data class LivXowChannelWrapper(
+    val channel: String = "",
+    val highlight: String = ""
+)
+
+/** Inner channel object (parsed from the "channel" string in [LivXowChannelWrapper]). */
+data class LivXowChannelData(
+    val name: String?,
+    val logo: String?,
+    val visible: Boolean?,
+    val links: String?,
+    val link_names: List<String>?,
+    val is_playlist: Boolean?
+)
+
 // ── ProviderManager ───────────────────────────────────────────────────────────
 
 /**
@@ -148,11 +177,16 @@ object LivXowProviderManager {
     /** Hardcoded fallback URL from the APK — replaced at runtime via Firebase. */
     private const val DEFAULT_BASE_URL = "https://sohaidoegeve2.shop/"
 
-    @Volatile private var cachedBaseUrl: String?   = null
+    private val baseUrlValue = ExpiringRemoteValue()
+
+    fun refreshFromFirebase() {
+        baseUrlValue.reset()
+    }
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
+        .addInterceptor(StaleDomainInterceptor(baseUrlValue))
         .build()
 
     private val baseHeaders = mapOf(
@@ -163,23 +197,17 @@ object LivXowProviderManager {
     // ── URL resolution ────────────────────────────────────────────────────────
 
     /**
-     * Returns the effective API base URL (with trailing slash).
+     * Returns the effective API base URL (with trailing slash), cached with expiry.
      * Priority: Firebase Remote Config → hardcoded APK fallback.
      */
-    suspend fun getBaseUrl(): String {
-        cachedBaseUrl?.let { return it }
-        val firebaseUrl = LivXowFirebaseFetcher.getBaseApiUrl()
-        cachedBaseUrl = if (!firebaseUrl.isNullOrBlank()) {
-            if (firebaseUrl.endsWith("/")) firebaseUrl else "$firebaseUrl/"
-        } else {
-            DEFAULT_BASE_URL
-        }
-        return cachedBaseUrl!!
-    }
+    suspend fun getBaseUrl(): String = baseUrlValue.get(
+        fetch = { LivXowFirebaseFetcher.getBaseApiUrl()?.let { if (it.endsWith("/")) it else "$it/" } },
+        fallback = { DEFAULT_BASE_URL }
+    )
 
     /** Invalidates cached URL — forces a fresh fetch on next call. */
     fun invalidateCache() {
-        cachedBaseUrl   = null
+        baseUrlValue.reset()
     }
 
     // ── HTTP helpers ──────────────────────────────────────────────────────────
@@ -308,12 +336,7 @@ object LivXowProviderManager {
                         startTime = ev.startTimeString(),
                         endTime   = ev.endTimeString()
                     ),
-                    formats = ev.link_names?.map { linkName ->
-                        LiveEventFormat(
-                            title = linkName["name"],
-                            webLink = null
-                        )
-                    } ?: emptyList()
+                    formats = ev.linkFormats()
                 )
             }
         } catch (e: Exception) {
@@ -340,51 +363,42 @@ object LivXowProviderManager {
             val wrappers = parseJson<List<LivXowChannelWrapper>>(json)
 
             wrappers.mapIndexedNotNull { index, wrapper ->
-                if (wrapper.channel != null && wrapper.channel.isNotBlank()) {
+                if (wrapper.channel.isNotBlank()) {
                     try {
                         val channelData = parseJson<LivXowChannelData>(wrapper.channel)
                         if (channelData.visible == false) return@mapIndexedNotNull null
-                        val links = channelData.links?.trim()
-                        if (links.isNullOrBlank()) return@mapIndexedNotNull null
-                        val slug = links.removeSuffix(".txt")
+                        if (channelData.links.isNullOrBlank()) return@mapIndexedNotNull null
                         LiveEventData(
                             id = index + 1,
                             title = channelData.name ?: "Unknown Channel",
                             image = channelData.logo,
-                            slug = slug,
+                            slug = channelData.links.removeSuffix(".txt"),
                             cat = "Custom",
                             publish = 1,
                             eventInfo = LiveEventInfo(
-                                teamA = channelData.name,
-                                teamB = null,
-                                teamAFlag = channelData.logo,
-                                teamBFlag = null,
-                                eventCat = "Custom",
-                                eventName = channelData.name,
-                                eventLogo = channelData.logo,
-                                isHot = null,
-                                eventType = null,
-                                startTime = null,
-                                endTime = null
+                                null, null, null, null, null,
+                                channelData.name, channelData.logo, "0",
+                                null, null, null
                             ),
-                            formats = listOf(LiveEventFormat(title = channelData.name, webLink = null))
+                            formats = channelData.links.split(", ").mapIndexed { i, link ->
+                                LiveEventFormat(
+                                    title = channelData.link_names?.getOrNull(i) ?: "Link ${i + 1}",
+                                    webLink = link
+                                )
+                            }
                         )
                     } catch (e: Exception) {
-                        println("LivXow: Failed to parse channel at index $index: ${e.message}")
+                        println("LivXow: Failed to parse inner custom event at index $index: ${e.message}")
                         return@mapIndexedNotNull null
                     }
-                } else if (wrapper.highlight != null && wrapper.highlight.isNotBlank()) {
+                } else if (wrapper.highlight.isNotBlank()) {
                     try {
                         val ev = parseJson<LivXowEvent>(wrapper.highlight)
                         if (ev.visible == false) return@mapIndexedNotNull null
                         if (ev.streamSlug.isBlank()) return@mapIndexedNotNull null
-                        // Create link names from event's link_names or use default
-                        val formats = ev.link_names?.mapNotNull { linkName ->
-                            linkName["name"]?.let { LiveEventFormat(title = it, webLink = null) }
-                        } ?: listOf(LiveEventFormat(title = "Link 1", webLink = null))
                         LiveEventData(
                             id = index + 1,
-                            title = ev.displayName.ifBlank { ev.eventName ?: "Event $index" },
+                            title = ev.displayName,
                             image = ev.thumbUrl,
                             slug = ev.streamSlug,
                             cat = ev.categoryName,
@@ -400,12 +414,13 @@ object LivXowProviderManager {
                                 isHot = null,
                                 eventType = ev.categoryName,
                                 startTime = ev.startTimeString(),
-                                endTime = ev.endTimeString()
+                                // Highlights are past events — always shown as ended
+                                endTime = "1970/01/01 00:00:00 +0000"
                             ),
-                            formats = formats
+                            formats = ev.linkFormats()
                         )
                     } catch (e: Exception) {
-                        println("LivXow: Failed to parse highlight at index $index: ${e.message}")
+                        println("LivXow: Failed to parse inner highlight at index $index: ${e.message}")
                         return@mapIndexedNotNull null
                     }
                 } else {
@@ -438,11 +453,5 @@ object LivXowProviderManager {
         val baseUrl = getBaseUrl()
         return fetchDecrypted("$baseUrl$slug.txt")
             ?: fetchDecrypted("$baseUrl$slug")
-    }
-
-    suspend fun getTelegramUrl(): String {
-        val firebaseTelegram = LivXowFirebaseFetcher.getTelegramUrl()
-        if (!firebaseTelegram.isNullOrBlank()) return firebaseTelegram
-        return "https://t.me/LivXowofficial"
     }
 }

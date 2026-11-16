@@ -20,6 +20,11 @@ android {
         buildConfigField("String", "SKTECH_V25_IV", "\"I=4dkwPiOuROD+pD\"")
         buildConfigField("String", "SKTECH_FALLBACK_AES_KEY", "\"l2l5kB7xC5qP1rK1\"")
         buildConfigField("String", "SKTECH_FALLBACK_AES_IV", "\"p1K5nP7uB8hH1l19\"")
+        // Firebase Remote Config identifiers used by FirebaseRemoteConfigFetcher to
+        // resolve the API base URL.
+        buildConfigField("String", "SKTECH_FIREBASE_API_KEY", "\"AIzaSyClGjK1EBL-ZLbCoep1z5QSmwMyHshimSk\"")
+        buildConfigField("String", "SKTECH_FIREBASE_APP_ID", "\"1:330162934410:android:0d81c4732e3d206d6cd373\"")
+        buildConfigField("String", "SKTECH_FIREBASE_PROJECT_NUMBER", "\"330162934410\"")
     }
 }
 

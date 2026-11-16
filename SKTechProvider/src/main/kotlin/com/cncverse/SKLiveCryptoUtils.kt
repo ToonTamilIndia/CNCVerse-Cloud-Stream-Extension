@@ -42,13 +42,7 @@ object SKLiveCryptoUtils {
 
     private fun decryptV23(encryptedData: String): String? {
         return try {
-            val padded = if (encryptedData.length % 4 != 0) {
-                encryptedData + "=".repeat(4 - encryptedData.length % 4)
-            } else {
-                encryptedData
-            }
-            val inner = byteArrayOf(*Base64.decode(padded, Base64.DEFAULT))
-                .toMutableList()
+            val inner = Base64.decode(padBase64(encryptedData), Base64.DEFAULT).toMutableList()
 
             for (i in 0 until inner.size - 1 step 2) {
                 val tmp = inner[i]
@@ -59,6 +53,7 @@ object SKLiveCryptoUtils {
             inner.reverse()
 
             val ciphertext = Base64.decode(inner.toByteArray(), Base64.DEFAULT)
+            if (ciphertext.size % 16 != 0) return null
 
             val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
             cipher.init(
@@ -67,7 +62,7 @@ object SKLiveCryptoUtils {
                 IvParameterSpec(V23_IV)
             )
             val plaintext = cipher.doFinal(ciphertext)
-            String(plaintext, Charsets.UTF_8)
+            String(plaintext, Charsets.UTF_8).takeIf { it.looksLikeJson() }
         } catch (e: Exception) {
             null
         }
@@ -87,6 +82,8 @@ object SKLiveCryptoUtils {
             null
         }
     }
+
+    private fun String.looksLikeJson(): Boolean = trimStart().firstOrNull().let { it == '[' || it == '{' }
 
     private fun padBase64(s: String): String =
         if (s.length % 4 != 0) s + "=".repeat(4 - s.length % 4) else s
@@ -127,8 +124,7 @@ object SKLiveCryptoUtils {
         val ciphertext = prepareCiphertext(encryptedData) ?: return null
         val plain = aesDecryptAndTransform(ciphertext, V23_KEY, V25_KEY1.toByteArray(Charsets.UTF_8)) ?: return null
         return try {
-            val s = String(Base64.decode(plain, Base64.DEFAULT), Charsets.UTF_8).trimStart()
-            if (s.startsWith("[") || s.startsWith("{")) s else null
+            String(Base64.decode(plain, Base64.DEFAULT), Charsets.UTF_8).takeIf { it.looksLikeJson() }
         } catch (_: Exception) { null }
     }
 
@@ -136,8 +132,7 @@ object SKLiveCryptoUtils {
         val ciphertext = prepareCiphertext(encryptedData) ?: return null
         val plain = aesDecryptAndTransform(ciphertext, V23_KEY, V25_KEY2.toByteArray(Charsets.UTF_8)) ?: return null
         return try {
-            val s = String(Base64.decode(plain, Base64.DEFAULT), Charsets.UTF_8).trimStart()
-            if (s.startsWith("[") || s.startsWith("{")) s else null
+            String(Base64.decode(plain, Base64.DEFAULT), Charsets.UTF_8).takeIf { it.looksLikeJson() }
         } catch (_: Exception) { null }
     }
 
@@ -166,8 +161,7 @@ object SKLiveCryptoUtils {
             val step3Raw = Base64.decode(padBase64(step2), Base64.DEFAULT)
             val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
             cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(FALLBACK_AES_KEY.toByteArray(Charsets.UTF_8), "AES"), IvParameterSpec(FALLBACK_AES_IV.toByteArray(Charsets.UTF_8)))
-            val result = String(cipher.doFinal(step3Raw), Charsets.UTF_8).trimStart()
-            if (result.startsWith("[") || result.startsWith("{")) result else null
+            String(cipher.doFinal(step3Raw), Charsets.UTF_8).takeIf { it.looksLikeJson() }
         } catch (_: Exception) { null }
     }
 
@@ -176,8 +170,7 @@ object SKLiveCryptoUtils {
             val raw = Base64.decode(padBase64(encryptedData), Base64.DEFAULT)
             val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
             cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(FALLBACK_AES_KEY.toByteArray(Charsets.UTF_8), "AES"), IvParameterSpec(FALLBACK_AES_IV.toByteArray(Charsets.UTF_8)))
-            val result = String(cipher.doFinal(raw), Charsets.UTF_8).trimStart()
-            if (result.startsWith("[") || result.startsWith("{")) result else null
+            String(cipher.doFinal(raw), Charsets.UTF_8).takeIf { it.looksLikeJson() }
         } catch (_: Exception) { null }
     }
 
@@ -202,10 +195,22 @@ object SKLiveCryptoUtils {
         decryptV23(encryptedData)?.let { return it }
         decryptLegacy(v25Input)?.let { return it }
         val legacyInput = try { String(Base64.decode(encryptedData, Base64.DEFAULT), Charsets.UTF_8) } catch (_: Exception) { encryptedData }
-        decryptLegacy(legacyInput)?.let { return it }
-        if (legacyInput != encryptedData) decryptLegacy(encryptedData)?.let { return it }
-        decryptFallbackB(encryptedData)?.let { return it }
-        decryptFallbackC(encryptedData)?.let { return it }
+        decryptLegacy(legacyInput)?.let {
+            println("SKLiveCrypto: ✓ decryptLegacy (Base64-unwrapped) succeeded (${it.length} chars)")
+            return it
+        }
+        if (legacyInput != encryptedData) decryptLegacy(encryptedData)?.let {
+            println("SKLiveCrypto: ✓ decryptLegacy (raw) succeeded (${it.length} chars)")
+            return it
+        }
+        decryptFallbackB(encryptedData)?.let {
+            println("SKLiveCrypto: ✓ decryptFallbackB succeeded (${it.length} chars)")
+            return it
+        }
+        decryptFallbackC(encryptedData)?.let {
+            println("SKLiveCrypto: ✓ decryptFallbackC succeeded (${it.length} chars)")
+            return it
+        }
         return null
     }
 }

@@ -13,6 +13,11 @@ android {
         // not hardcoded in Kotlin source. No environment variables involved.
         buildConfigField("String", "CRICIFY_PROVIDER_SECRET1", "\"3368487a78594167534749382f68616d:557143766b766a656345497a38343256\"")
         buildConfigField("String", "CRICIFY_PROVIDER_SECRET2", "\"4d7165594743543441594b6f484b7254:6f484b725451755078387a6c386f4a2b\"")
+        // Firebase Remote Config identifiers used by FirebaseRemoteConfigFetcher to
+        // resolve the provider API base URL.
+        buildConfigField("String", "CRICIFY_FIREBASE_API_KEY", "\"AIzaSyAh9jkEU0E_UYxH0m_BKAt-uUSTiTPqhb8\"")
+        buildConfigField("String", "CRICIFY_FIREBASE_APP_ID", "\"1:963020218535:android:47ec53252c64fb3c9c7b82\"")
+        buildConfigField("String", "CRICIFY_FIREBASE_PROJECT_NUMBER", "\"963020218535\"")
     }
 }
 

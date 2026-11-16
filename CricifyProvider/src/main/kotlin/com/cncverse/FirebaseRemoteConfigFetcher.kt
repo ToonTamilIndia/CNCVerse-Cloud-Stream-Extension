@@ -15,12 +15,13 @@ import java.util.concurrent.TimeUnit
  * Fetches remote config from Firebase to get API endpoints dynamically
  */
 object FirebaseRemoteConfigFetcher {
-    
+
     private const val PACKAGE_NAME = "com.cricfy.tv"
-    private const val API_KEY = "AIzaSyAh9jkEU0E_UYxH0m_BKAt-uUSTiTPqhb8"
-    private const val APP_ID = "1:963020218535:android:47ec53252c64fb3c9c7b82"
-    private const val PROJECT_NUMBER = "963020218535"
-    
+    // Firebase identifiers are injected at build time from this module's build.gradle.kts.
+    private val API_KEY get() = BuildConfig.CRICIFY_FIREBASE_API_KEY
+    private val APP_ID get() = BuildConfig.CRICIFY_FIREBASE_APP_ID
+    private val PROJECT_NUMBER get() = BuildConfig.CRICIFY_FIREBASE_PROJECT_NUMBER
+
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)

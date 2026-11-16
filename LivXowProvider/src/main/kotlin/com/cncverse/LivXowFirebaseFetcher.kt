@@ -18,9 +18,10 @@ import java.util.concurrent.TimeUnit
  */
 object LivXowFirebaseFetcher {
 
-    private const val API_KEY = "AIzaSyBIfjXqlm2QLLctnTUQUNK9j9Kf2ybS7yw"
-    private const val APP_ID = "1:459539398637:android:96270124df48971af131e4"
-    private const val PROJECT_NUMBER = "459539398637"
+    // Firebase identifiers are injected at build time from this module's build.gradle.kts.
+    private val API_KEY get() = BuildConfig.LIVXOW_FIREBASE_API_KEY
+    private val APP_ID get() = BuildConfig.LIVXOW_FIREBASE_APP_ID
+    private val PROJECT_NUMBER get() = BuildConfig.LIVXOW_FIREBASE_PROJECT_NUMBER
     private const val PACKAGE_NAME = "com.livxow.tv"
     private const val APP_VERSION = "2.3"
     private const val APP_BUILD = "5"
@@ -115,29 +116,10 @@ object LivXowFirebaseFetcher {
     }
 
     /**
-     * Gets the Telegram URL from Firebase Remote Config.
-     * Prefers new_telegram_url, falls back to telegram_url.
-     */
-    suspend fun getTelegramUrl(): String? {
-        val entries = fetchRemoteConfig()
-        return entries?.get("new_telegram_url") ?: entries?.get("telegram_url")
-    }
-
-    /**
      * Gets the web URL from Firebase Remote Config.
      */
     suspend fun getWebUrl(): String? {
         val entries = fetchRemoteConfig()
         return entries?.get("web_url")
-    }
-
-    suspend fun getAllConfig(): Triple<String?, String?, String?> {
-        val entries = fetchRemoteConfig()
-        val telegram = entries?.get("new_telegram_url") ?: entries?.get("telegram_url")
-        return Triple(
-            entries?.get("api_url")?.trimEnd('/'),
-            telegram,
-            entries?.get("web_url")
-        )
     }
 }

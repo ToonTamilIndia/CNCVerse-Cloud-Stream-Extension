@@ -28,6 +28,21 @@ data class SKTechCategoryData(
     val api: String
 )
 
+// SK Tech specific wrapper for custom (channel list) categories
+data class SKTechChannelWrapper(
+    val channel: String  // This is a JSON string that needs to be parsed
+)
+
+// Inner channel data from the nested JSON
+data class SKTechChannelData(
+    val name: String?,
+    val logo: String?,
+    val visible: Boolean?,
+    val links: String?,
+    val link_names: List<String>?,
+    val is_playlist: Boolean?
+)
+
 // SK Tech specific wrapper for events
 data class SKTechEventWrapper(
     val event: String  // This is a JSON string that needs to be parsed
@@ -86,10 +101,9 @@ data class LiveEventFormat(
 object ProviderManager {
     // Default fallback base URL (will be replaced by Firebase Remote Config)
     private const val DEFAULT_BASE_URL = "https://matkeritnagurorxbxb.store"
-    
-    // Cached base URL from Firebase
-    private var cachedBaseUrl: String? = null
-    
+
+    private val baseUrlValue = ExpiringRemoteValue()
+
     // Helper function to convert SK Tech date/time format to expected format
     private fun parseDateTime(date: String?, time: String?): String? {
         if (date == null || time == null) return null
@@ -112,29 +126,23 @@ object ProviderManager {
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
+        .addInterceptor(StaleDomainInterceptor(baseUrlValue))
         .build()
     
     // Fallback providers (empty for SK Tech, will fetch from API)
     private val fallbackProviders = emptyList<Map<String, Any>>()
     
     /**
-     * Gets the base URL from Firebase Remote Config
+     * Gets the base URL from Firebase Remote Config (cached with expiry)
      * Falls back to default URL if Firebase fetch fails
      */
-    private suspend fun getBaseUrl(): String {
-        // Return cached URL if available
-        cachedBaseUrl?.let { return it }
-        
-        // Try to fetch from Firebase Remote Config
-        val firebaseUrl = FirebaseRemoteConfigFetcher.getBaseApiUrl()
-        if (!firebaseUrl.isNullOrBlank()) {
-            cachedBaseUrl = firebaseUrl
-            return cachedBaseUrl!!
-        }
-        
-        // Fall back to default URL
-        cachedBaseUrl = DEFAULT_BASE_URL
-        return DEFAULT_BASE_URL
+    private suspend fun getBaseUrl(): String = baseUrlValue.get(
+        fetch = { FirebaseRemoteConfigFetcher.getBaseApiUrl() },
+        fallback = { DEFAULT_BASE_URL }
+    )
+
+    fun refreshFromFirebase() {
+        baseUrlValue.reset()
     }
     
     suspend fun fetchProviders(): List<Map<String, Any>> {
@@ -173,7 +181,8 @@ object ProviderManager {
                                             "id" to (index + 1),
                                             "title" to categoryData.name,
                                             "image" to (categoryData.logo ?: ""),
-                                            "catLink" to categoryData.api
+                                            "catLink" to categoryData.api,
+                                            "type" to (categoryData.type ?: "m3u")
                                         )
                                     } else {
                                         null
@@ -252,17 +261,19 @@ object ProviderManager {
                                             eventCat = eventData.category,
                                             eventName = eventData.eventName,
                                             eventLogo = eventData.eventLogo,
-                                            isHot = null,
-                                            eventType = eventData.category,
+                                            isHot = if ((eventData.priority ?: 0) > 0) "1" else "0",
+                                            eventType = null,
                                             startTime = parseDateTime(eventData.date, eventData.time),
                                             endTime = parseDateTime(eventData.end_date, eventData.end_time)
                                         ),
-                                        publish = if (eventData.visible == true) 1 else 0,
+                                        publish = if (eventData.visible != false) 1 else 0,
                                         formats = eventData.link_names?.map { name ->
                                             LiveEventFormat(
                                                 title = name,
                                                 webLink = eventData.links
                                             )
+                                        } ?: eventData.links?.split(", ")?.mapIndexed { i, link ->
+                                            LiveEventFormat(title = "Link ${i + 1}", webLink = link)
                                         } ?: emptyList()
                                     )
                                 } catch (e: Exception) {
@@ -295,7 +306,7 @@ object ProviderManager {
         return withContext(Dispatchers.IO) {
             try {
                 val baseUrl = getBaseUrl()
-                val safeLink = catLink.trimStart('/')
+                val safeLink = catLink.removePrefix("/")
                 val eventsUrl = "$baseUrl/$safeLink"
 
                 val request = Request.Builder()
@@ -306,6 +317,7 @@ object ProviderManager {
                 if (response.isSuccessful) {
                     val encryptedData = response.body.string()
                     if (!encryptedData.isNullOrBlank()) {
+                        println("SKTech: Fetched custom events data from $safeLink")
                         val decryptedData = SKLiveCryptoUtils.decryptSKLive(encryptedData.trim())
                         if (!decryptedData.isNullOrBlank()) {
                             val wrappers = parseJson<List<SKTechChannelWrapper>>(decryptedData)
@@ -313,32 +325,26 @@ object ProviderManager {
                                 try {
                                     val channelData = parseJson<SKTechChannelData>(wrapper.channel)
                                     val links = channelData.links
-                                    if (links.isNullOrBlank()) return@mapIndexedNotNull null
-                                    val visible = channelData.visible != false
                                     LiveEventData(
                                         id = index + 1,
                                         title = channelData.name ?: "Unknown Channel",
                                         image = channelData.logo,
-                                        slug = links.substringBeforeLast(".", ""),
+                                        slug = links?.substringBeforeLast(".") ?: "",
                                         cat = "Custom",
                                         eventInfo = LiveEventInfo(
                                             null, null, null, null, null,
                                             channelData.name, channelData.logo, "0",
                                             null, null, null
                                         ),
-                                        publish = if (visible) 1 else 0,
-                                        formats = if (!channelData.link_names.isNullOrEmpty()) {
-                                            channelData.link_names.map { name ->
-                                                LiveEventFormat(title = name, webLink = links)
-                                            }
-                                        } else {
-                                            links.split(", ").mapIndexed { i, link ->
-                                                LiveEventFormat(title = "Link ${i + 1}", webLink = link)
-                                            }
-                                        }
+                                        publish = if (channelData.visible != false) 1 else 0,
+                                        formats = channelData.link_names?.map { name ->
+                                            LiveEventFormat(title = name, webLink = links)
+                                        } ?: links?.split(", ")?.mapIndexed { i, link ->
+                                            LiveEventFormat(title = "Link ${i + 1}", webLink = link)
+                                        } ?: emptyList()
                                     )
                                 } catch (e: Exception) {
-                                    println("SKTech: Failed to parse custom event at $index: ${e.message}")
+                                    println("SKTech: Failed to parse custom event at index $index: ${e.message}")
                                     null
                                 }
                             }

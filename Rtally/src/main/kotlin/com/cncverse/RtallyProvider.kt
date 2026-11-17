@@ -1,5 +1,10 @@
 ﻿package com.cncverse
 
+import com.cncverse.rtally.Filepress
+import com.cncverse.rtally.GDFlix
+import com.cncverse.rtally.GDxFiles
+import com.cncverse.rtally.Gofile
+import com.cncverse.rtally.HubCloud
 import com.lagradost.cloudstream3.Episode
 import com.lagradost.cloudstream3.HomePageResponse
 import com.lagradost.cloudstream3.LoadResponse
@@ -9,6 +14,7 @@ import com.lagradost.cloudstream3.SearchResponse
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.TvType
 import com.lagradost.cloudstream3.addDubStatus
+import com.lagradost.cloudstream3.amap
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.mainPageOf
 import com.lagradost.cloudstream3.newAnimeSearchResponse
@@ -18,9 +24,11 @@ import com.lagradost.cloudstream3.newMovieLoadResponse
 import com.lagradost.cloudstream3.newMovieSearchResponse
 import com.lagradost.cloudstream3.newTvSeriesLoadResponse
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.extractors.ByseSX
 import com.lagradost.cloudstream3.extractors.VidHidePro
 import com.lagradost.cloudstream3.utils.loadExtractor
 import org.jsoup.nodes.Element
+import java.net.URI
 import java.net.URLDecoder
 
 class RtallyProvider : MainAPI() {
@@ -28,7 +36,7 @@ class RtallyProvider : MainAPI() {
         var context: android.content.Context? = null
     }
 
-    override var mainUrl = "https://www.rtally.shop"
+    override var mainUrl = "https://www.rtally.link"
     override var name = "Rtally"
     override var lang = "ta"
     override val hasMainPage = true
@@ -54,7 +62,9 @@ class RtallyProvider : MainAPI() {
     private val headers =
         mapOf("user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36")
 
-    // Upstream retries dead `vidhide*` hosts through its current mirror domain.
+    private val junkHosts = listOf("rtally", "facebook.com", "t.me", "telegram", "google.com", "toonworld", "xmovies")
+
+    // Dead `vidhide*` hosts redirect to the current mirror domain, which is remembered here
     @Volatile private var vidHideMirror = "https://callistanise.com"
     private val vidHideRegex = Regex("^https?://[^/]*vidhide[^/]*(/.*)$", RegexOption.IGNORE_CASE)
 
@@ -75,9 +85,11 @@ class RtallyProvider : MainAPI() {
         return newHomePageResponse(request.name, home, true)
     }
 
-    private fun toResult(post: Element): SearchResponse {
+    private fun toResult(post: Element): SearchResponse? {
+        val href = post.attr("href")
+        if (!href.startsWith("/post/")) return null
         val title = post.select("h4").text()
-        val url = mainUrl + post.attr("href")
+        val url = mainUrl + href
         var posterUrl = extractImageUrl(post.select("img").attr("src"))
         if (posterUrl.isNullOrEmpty()) {
             val styleAttr = post.select("div[style*=background-image]").attr("style")
@@ -141,7 +153,7 @@ class RtallyProvider : MainAPI() {
             cacheTime = 60,
             headers = headers
         ).document
-        return doc.select("div.grid:nth-child(1) > a[href]:not([target])").mapNotNull { toResult(it) }
+        return doc.select("a[href^='/post/']:has(h4)").mapNotNull { toResult(it) }.distinctBy { it.url }
     }
 
     override suspend fun load(url: String): LoadResponse {
@@ -194,13 +206,10 @@ class RtallyProvider : MainAPI() {
             }
             val streamLinks = mutableListOf<String>()
             doc.select("a[target='_blank'][href]").forEach { a ->
-                val href = a.attr("href")
-                if (href.startsWith("http") && !href.contains("rtally") && !href.contains("facebook.com") &&
-                    !href.contains("t.me") && !href.contains("telegram") && !href.contains("google.com")
-                ) {
+                if (isServerLink(a)) {
                     val lbl = a.selectFirst("span[class*='font-bold'], span")?.text()?.trim()
                         ?.takeIf { it.isNotEmpty() } ?: "Stream"
-                    streamLinks.add("$lbl|${embedify(href)}")
+                    streamLinks.add("$lbl|${embedify(a.attr("href"))}")
                 }
             }
             if (streamLinks.isNotEmpty()) {
@@ -240,13 +249,10 @@ class RtallyProvider : MainAPI() {
                 }
             }
             doc.select("a[target='_blank'][href]").forEach { a ->
-                val href = a.attr("href")
-                if (href.startsWith("http") && href.contains("rtally") && !href.contains("facebook.com") &&
-                    !href.contains("t.me") && !href.contains("telegram") && !href.contains("google.com")
-                ) {
+                if (isServerLink(a)) {
                     val lbl = a.selectFirst("span[class*='font-bold'], span")?.text()?.trim()
                         ?.takeIf { it.isNotEmpty() } ?: "Stream"
-                    links.add("$lbl|${embedify(href)}")
+                    links.add("$lbl|${embedify(a.attr("href"))}")
                 }
             }
             return newMovieLoadResponse(title, url, TvType.Movie, links.joinToString(" ; ")) {
@@ -267,78 +273,84 @@ class RtallyProvider : MainAPI() {
         }
     }
 
-    private fun embedify(url: String): String {
-        return when {
-            url.contains("vidhideplus.com/d/") -> url.replace("/d/", "/v/")
-            url.contains("vidhidepre.com/d/") -> url.replace("/d/", "/v/")
-            url.contains("playerwish.com/d/") || url.contains("filemoon.sx/d/") -> url.replace("/d/", "/e/")
-            url.contains("filemoon.sx/download/") -> url.replace("/download/", "/e/")
-            // Upstream also rewrites any `byse*` download link to its embed path.
-            Regex("^https?://byse[^/]*/download/", RegexOption.IGNORE_CASE).containsMatchIn(url) ->
-                url.replace("/download/", "/e/")
-            else -> url
-        }
-    }
-
     private suspend fun resolveDownloadPage(
         dlPageUrl: String,
         qualityLabel: String,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        val doc = try {
-            app.get(dlPageUrl, headers = headers).document
-        } catch (e: Exception) {
-            return
-        }
-        doc.select("a[target='_blank'][href]").forEach { a ->
-            val href = a.attr("href")
-            try {
-                if (href.startsWith("http") && !href.contains("rtally") && !href.contains("facebook.com") &&
-                    !href.contains("t.me") && !href.contains("telegram") && !href.contains("google.com")
-                ) {
-                    extractWithMirror(embedify(href), subtitleCallback, callback)
-                }
-            } catch (e: Exception) {
+        try {
+            val doc = app.get(dlPageUrl, headers = headers, cacheTime = 60).document
+            doc.select("a[target='_blank'][href]").filter { isServerLink(it) }.amap { a ->
+                extract(embedify(a.attr("href")), subtitleCallback, callback)
             }
+        } catch (e: Exception) {
         }
     }
 
-    /**
-     * Ported from upstream Rtally `extract`: `vidhide*` links are tried normally,
-     * then retried through the current `vidHideMirror` host when nothing resolves.
-     */
-    private suspend fun extractWithMirror(
+    private fun isServerLink(a: Element): Boolean {
+        val href = a.attr("href")
+        if (!href.startsWith("http") || a.hasClass("no-ad")) return false
+        return junkHosts.none { href.contains(it) }
+    }
+
+    private suspend fun extract(
         url: String,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        val vidHidePath = vidHideRegex.find(url)?.groupValues?.getOrNull(1)
-        if (vidHidePath == null) {
-            loadExtractor(url, subtitleCallback, callback)
-            return
-        }
-
-        var found = false
         try {
-            loadExtractor(url, subtitleCallback) { link ->
-                found = true
-                callback(link)
+            val vidHidePath = vidHideRegex.find(url)?.groupValues?.get(1)
+            if (vidHidePath != null) {
+                var found = false
+                val cb: (ExtractorLink) -> Unit = {
+                    found = true
+                    callback(it)
+                }
+                runCatching {
+                    VidHidePro().getUrl("$vidHideMirror$vidHidePath", "$mainUrl/", subtitleCallback, cb)
+                }
+                if (!found) {
+                    val location = app.get(url, allowRedirects = false, timeout = 15L).headers["Location"]
+                    if (location != null) {
+                        Regex("^https?://[^/]+").find(location)?.value?.let { vidHideMirror = it }
+                    }
+                    VidHidePro().getUrl("$vidHideMirror$vidHidePath", "$mainUrl/", subtitleCallback, callback)
+                }
+                return
             }
-        } catch (_: Exception) {
-        }
-        if (found) return
 
-        try {
-            val response = app.get(url, allowRedirects = false)
-            val location = response.headers["location"]
-            Regex("^https?://[^/]+").find(location ?: "")?.value?.let { vidHideMirror = it }
-        } catch (_: Exception) {
+            when {
+                Regex("^https?://byse[^/]*/").containsMatchIn(url) ->
+                    ByseSX().getUrl(url, "$mainUrl/", subtitleCallback, callback)
+                hostOf(url).let { it.contains("hubcloud") || it.contains("vcloud") } ->
+                    HubCloud().getUrl(url, "$mainUrl/", subtitleCallback, callback)
+                hostOf(url).contains("gdflix") ->
+                    GDFlix().getUrl(url, "$mainUrl/", subtitleCallback, callback)
+                hostOf(url).contains("gdxfiles") ->
+                    GDxFiles().getUrl(url, "$mainUrl/", subtitleCallback, callback)
+                hostOf(url).let { it.contains("filepress") || it.contains("filebee") } ->
+                    Filepress().getUrl(url, "$mainUrl/", subtitleCallback, callback)
+                hostOf(url).contains("gofile") ->
+                    Gofile().getUrl(url, "$mainUrl/", subtitleCallback, callback)
+                else -> loadExtractor(url, "$mainUrl/", subtitleCallback, callback)
+            }
+        } catch (e: Exception) {
         }
+    }
 
-        try {
-            VidHidePro().getUrl("$vidHideMirror$vidHidePath", "$mainUrl/", subtitleCallback, callback)
-        } catch (_: Exception) {
+    private fun hostOf(url: String): String {
+        return runCatching { URI(url).host?.lowercase() }.getOrNull() ?: ""
+    }
+
+    private fun embedify(url: String): String {
+        return when {
+            url.contains("vidhideplus.com/d/") -> url.replace("/d/", "/v/")
+            url.contains("vidhidepre.com/d/") -> url.replace("/d/", "/v/")
+            url.contains("playerwish.com/d/") || url.contains("filemoon.sx/d/") -> url.replace("/d/", "/e/")
+            url.contains("filemoon.sx/download/") || Regex("^https?://byse[^/]*/download/").containsMatchIn(url) ->
+                url.replace("/download/", "/e/")
+            else -> url
         }
     }
 
@@ -348,18 +360,13 @@ class RtallyProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        data.split(" ; ").forEach { item ->
+        data.split(" ; ").amap { item ->
             val parts = item.split("|")
-            val linkUrl = if (parts.size >= 2) parts[1].trim() else item.trim()
+            val linkUrl = (if (parts.size >= 2) parts[1] else item).trim()
             if (linkUrl.startsWith("dlpage:")) {
-                val dlPage = linkUrl.removePrefix("dlpage:")
-                val qualityLabel = parts.getOrNull(0) ?: ""
-                resolveDownloadPage(dlPage, qualityLabel, subtitleCallback, callback)
-            } else if (linkUrl.isNotEmpty()) {
-                try {
-                    extractWithMirror(linkUrl, subtitleCallback, callback)
-                } catch (e: Exception) {
-                }
+                resolveDownloadPage(linkUrl.removePrefix("dlpage:"), parts.getOrNull(0) ?: "", subtitleCallback, callback)
+            } else if (linkUrl.isNotEmpty() && junkHosts.none { linkUrl.contains(it) }) {
+                extract(embedify(linkUrl), subtitleCallback, callback)
             }
         }
         return true

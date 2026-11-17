@@ -33,15 +33,17 @@ import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
 import android.content.Intent
 import android.net.Uri
 
-class LiveEventsProvider(private val customName: String = "⚡SKTech Live Events", val customCatLink: String? = null) : MainAPI() {
+class LiveEventsProvider(
+    override var name: String = "⚡SKTech Live Events",
+    val customCatLink: String? = null
+) : MainAPI() {
     companion object {
         var context: android.content.Context? = null
-        private var cachedWebUrl: String? = null
         private const val DEFAULT_WEB_URL = "https://welalagaa.site"
+        private val webUrlValue = ExpiringRemoteValue()
     }
 
     override var mainUrl = DEFAULT_WEB_URL
-    override var name = customName
     override var lang = "ta"
     override val hasMainPage = true
     override val hasChromecastSupport = true
@@ -51,28 +53,20 @@ class LiveEventsProvider(private val customName: String = "⚡SKTech Live Events
             OkHttpClient.Builder()
                     .connectTimeout(30, TimeUnit.SECONDS)
                     .readTimeout(30, TimeUnit.SECONDS)
+                    .addInterceptor(StaleDomainInterceptor(webUrlValue))
                     .build()
 
     /**
-     * Gets the web URL from Firebase Remote Config
+     * Gets the web URL from Firebase Remote Config (cached with expiry)
      * Falls back to default URL if Firebase fetch fails
      */
     private suspend fun getWebUrl(): String {
-        // Return cached URL if available
-        cachedWebUrl?.let { return it }
-        
-        // Try to fetch from Firebase Remote Config
-        val firebaseUrl = FirebaseRemoteConfigFetcher.getBaseApiUrl()
-        if (!firebaseUrl.isNullOrBlank()) {
-            cachedWebUrl = firebaseUrl
-            mainUrl = cachedWebUrl!!
-            return cachedWebUrl!!
-        }
-        
-        // Fall back to default URL
-        cachedWebUrl = DEFAULT_WEB_URL
-        mainUrl = DEFAULT_WEB_URL
-        return DEFAULT_WEB_URL
+        val url = webUrlValue.get(
+            fetch = { FirebaseRemoteConfigFetcher.getBaseApiUrl() },
+            fallback = { DEFAULT_WEB_URL }
+        )
+        mainUrl = url
+        return url
     }
 
     // Data classes for stream response from /channels/{slug}.txt
@@ -120,7 +114,7 @@ class LiveEventsProvider(private val customName: String = "⚡SKTech Live Events
                         !eventInfo.teamA.isNullOrBlank() &&
                         !eventInfo.teamB.isNullOrBlank()
         ) {
-            if (eventInfo.teamA == eventInfo.teamB) {
+            if (isSameTeam(eventInfo.teamA, eventInfo.teamB)) {
                 // Same team means it's a show/event, not a match
                 eventInfo.teamA
             } else {
@@ -198,8 +192,14 @@ class LiveEventsProvider(private val customName: String = "⚡SKTech Live Events
         }
     }
 
+    private fun isSameTeam(a: String?, b: String?): Boolean {
+        if (a.isNullOrBlank() || b.isNullOrBlank()) return false
+        return a.trim().equals(b.trim(), ignoreCase = true)
+    }
+
     /**
-     * Generate a match card poster URL using the CNCVerse API
+     * Generate a match card poster URL using the CNCVerse card API
+     * Single-team events (teamA == teamB) render as a show card without teamB
      */
     private fun generateMatchCardUrl(event: LiveEventData): String {
         val eventInfo = event.eventInfo
@@ -207,8 +207,11 @@ class LiveEventsProvider(private val customName: String = "⚡SKTech Live Events
         val title = java.net.URLEncoder.encode(eventInfo?.eventName ?: event.title, "UTF-8")
         val teamA = java.net.URLEncoder.encode(eventInfo?.teamA ?: "Team A", "UTF-8")
         val teamB = java.net.URLEncoder.encode(eventInfo?.teamB ?: "Team B", "UTF-8")
-        val teamAImg = eventInfo?.teamAFlag ?: ""
-        val teamBImg = eventInfo?.teamBFlag ?: ""
+        val sameTeams = isSameTeam(eventInfo?.teamA, eventInfo?.teamB)
+        val teamAImg = eventInfo?.teamAFlag?.takeIf { it.isNotBlank() }
+            ?: (if (sameTeams) eventInfo?.teamBFlag else null)
+            ?: ""
+        val teamBImg = if (sameTeams) "" else eventInfo?.teamBFlag ?: ""
         val eventLogo = eventInfo?.eventLogo ?: ""
         val isLive = isEventLive(event)
         val isEnded = isEventEnded(event)
@@ -217,7 +220,7 @@ class LiveEventsProvider(private val customName: String = "⚡SKTech Live Events
         val time = try {
             eventInfo?.startTime?.let {
             val dateFormat = SimpleDateFormat("yyyy/MM/dd HH:mm:ss Z", Locale.US)
-            val displayFormat = SimpleDateFormat("MMM dd, yyyy hh:mm a", Locale.US)
+            val displayFormat = SimpleDateFormat("MMM dd, yyyy hh:mm a z", Locale.US)
             val date = dateFormat.parse(it)
             date?.let { d -> java.net.URLEncoder.encode(displayFormat.format(d), "UTF-8") } ?: ""
             } ?: ""
@@ -226,10 +229,10 @@ class LiveEventsProvider(private val customName: String = "⚡SKTech Live Events
         }
         
         return buildString {
-            append("https://live-card-png.cricify.workers.dev/?")
+            append("https://card.cncverse.dpdns.org/?")
             append("title=$title")
             append("&teamA=$teamA")
-            append("&teamB=$teamB")
+            if (!sameTeams) append("&teamB=$teamB")
             if (teamAImg.isNotBlank()) append("&teamAImg=$teamAImg")
             if (teamBImg.isNotBlank()) append("&teamBImg=$teamBImg")
             if (eventLogo.isNotBlank()) append("&eventLogo=$eventLogo")
@@ -242,6 +245,9 @@ class LiveEventsProvider(private val customName: String = "⚡SKTech Live Events
 
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        webUrlValue.reset()
+        ProviderManager.refreshFromFirebase()
+
         val events = if (customCatLink != null) {
             ProviderManager.fetchCustomEvents(customCatLink)
         } else {
@@ -268,7 +274,28 @@ class LiveEventsProvider(private val customName: String = "⚡SKTech Live Events
 
                             val searchResponses =
                                     categoryEvents
-                                    .sortedByDescending{ isEventLive(it) }
+                                    .sortedWith(
+                                        compareBy<LiveEventData> { event ->
+                                            val status = getEventStatus(event)
+                                            when {
+                                                status.contains("🔴") -> 0
+                                                status.contains("🔜") -> 1
+                                                status.contains("✅") -> 2
+                                                else -> 3
+                                            }
+                                        }.thenBy { event: LiveEventData ->
+                                            try {
+                                                val info = event.eventInfo
+                                                if (info == null || info.startTime == null) Long.MAX_VALUE
+                                                else {
+                                                    val fmt = SimpleDateFormat("yyyy/MM/dd HH:mm:ss Z", Locale.US)
+                                                    fmt.parse(info.startTime)?.time ?: Long.MAX_VALUE
+                                                }
+                                            } catch (e: Exception) {
+                                                Long.MAX_VALUE
+                                            }
+                                        }
+                                    )
                                     .map { event ->
                                         val displayTitle = createDisplayTitle(event)
                                         val status = getEventStatus(event)
@@ -277,7 +304,9 @@ class LiveEventsProvider(private val customName: String = "⚡SKTech Live Events
                                                 else displayTitle
 
                                         // Use match card API for poster
-                                        val posterUrl = generateMatchCardUrl(event)
+                                        val posterUrl =
+                                                if (event.cat == "Custom" && !event.image.isNullOrBlank()) event.image
+                                                else generateMatchCardUrl(event)
 
                                         val loadData =
                                                 LiveEventLoadData(
@@ -372,7 +401,7 @@ class LiveEventsProvider(private val customName: String = "⚡SKTech Live Events
                 info.startTime?.let {
                     try {
                         val dateFormat = SimpleDateFormat("yyyy/MM/dd HH:mm:ss Z", Locale.US)
-                        val displayFormat = SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.US)
+                        val displayFormat = SimpleDateFormat("MMM dd, yyyy HH:mm z", Locale.US)
                         val date = dateFormat.parse(it)
                         date?.let { d -> append("🕐 ${displayFormat.format(d)}\n") }
                     } catch (e: Exception) {
@@ -494,12 +523,15 @@ class LiveEventsProvider(private val customName: String = "⚡SKTech Live Events
                         if (!finalHeaders.containsKey("User-Agent")) {
                             finalHeaders["User-Agent"] = "Mozilla/5.0 (Linux; Android 10; Pixel 3 XL) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
                         }
+                        val linkType =
+                                if (url.contains(".m3u") || url.contains(".m3u8")) ExtractorLinkType.M3U8
+                                else INFER_TYPE
                         callback.invoke(
                                 newExtractorLink(
                                         source = this.name,
                                         name = serverName,
                                         url = url,
-                                        type = ExtractorLinkType.M3U8
+                                        type = linkType
                                 ) {
                                     this.quality = Qualities.Unknown.value
                                     if (finalHeaders.isNotEmpty()) {

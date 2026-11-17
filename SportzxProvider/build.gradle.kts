@@ -1,5 +1,5 @@
 // use an integer for version numbers
-version = 20
+version = 32
 
 dependencies {
     implementation("androidx.core:core:1.16.0")
@@ -15,6 +15,7 @@ android {
         buildConfigField("String", "SPORTZX_CHARSET", "\"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+!@#\$%&=\"")
         buildConfigField("String", "SPORTZX_PRK", "\"d1a7ebbaed93b2f68ac092ade2b0075d917634447a3519b41e817ad631020053\"")
         buildConfigField("String", "SPORTZX_CTX_HASH", "\"1676ec7db4771b0d826d70369b579684b182d2c0133be041bdd55f5d6d79a98b\"")
+        buildConfigField("String", "SPORTZX_V3_PEPPER", "\"b1657de309d6e790607a5c4ee7d1af4853f571857dc965e65cb56743923a4579\"")
     }
 }
 

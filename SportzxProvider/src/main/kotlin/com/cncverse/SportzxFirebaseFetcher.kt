@@ -17,18 +17,22 @@ object SportzxFirebaseFetcher {
     private const val PROJECT_NUMBER = "234785582029"
     private const val APP_VERSION = "2.6"
     private const val APP_BUILD = "15"
-    private const val FALLBACK_URL = "https://streamtvapp.top"
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .build()
 
+    private val probeClient = client.newBuilder()
+        .connectTimeout(8, TimeUnit.SECONDS)
+        .readTimeout(8, TimeUnit.SECONDS)
+        .build()
+
     data class RemoteConfigResponse(
         val entries: Map<String, String>? = null
     )
 
-    suspend fun fetchRemoteConfig(): Map<String, String>? = withContext(Dispatchers.IO) {
+    private suspend fun fetchRemoteConfig(): Map<String, String>? = withContext(Dispatchers.IO) {
         try {
             val url = "https://firebaseremoteconfig.googleapis.com/v1/projects/$PROJECT_NUMBER/namespaces/firebase:fetch"
             val appInstanceId = UUID.randomUUID().toString().replace("-", "")
@@ -61,21 +65,37 @@ object SportzxFirebaseFetcher {
                 .build()
 
             val response = client.newCall(request).execute()
-            if (response.isSuccessful) {
-                val body = response.body.string()
-                if (body.isNotBlank()) {
-                    return@withContext parseJson<RemoteConfigResponse>(body).entries
-                }
+            if (!response.isSuccessful) {
+                println("SportzxFirebase: RemoteConfig failed HTTP ${response.code}")
+                return@withContext null
             }
-            null
+            parseJson<RemoteConfigResponse>(response.body.string()).entries
         } catch (e: Exception) {
             println("SportzxFirebase: RemoteConfig exception — ${e.message}")
             null
         }
     }
 
+    private suspend fun reachable(baseUrl: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val request = Request.Builder()
+                .url("$baseUrl/events.json")
+                .header("User-Agent", "Dalvik/2.1.0 (Linux; Android 13)")
+                .build()
+            probeClient.newCall(request).execute().use { true }
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /** Returns the first reachable of `api_url` / `api_url_tv`, falling back to the bundled host. */
     suspend fun getBaseApiUrl(): String? {
-        val entries = fetchRemoteConfig()
-        return entries?.get("api_url")?.trimEnd('/') ?: FALLBACK_URL
+        val fallbackUrl = "https://streamtvapp.top"
+        val entries = fetchRemoteConfig() ?: return fallbackUrl
+        val candidates = listOfNotNull(entries["api_url"], entries["api_url_tv"])
+            .map { it.trim().trimEnd('/') }
+            .filter { it.isNotBlank() }
+            .distinct()
+        return candidates.firstOrNull { reachable(it) } ?: candidates.firstOrNull() ?: fallbackUrl
     }
 }

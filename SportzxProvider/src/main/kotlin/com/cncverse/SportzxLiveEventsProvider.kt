@@ -1,12 +1,6 @@
 package com.cncverse
 
-import android.os.Handler
-import android.os.Looper
 import android.util.Base64
-import android.webkit.WebChromeClient
-import android.webkit.WebSettings
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
@@ -20,16 +14,7 @@ import com.lagradost.cloudstream3.utils.newExtractorLink
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.TimeUnit
-import kotlin.coroutines.resume
-import kotlin.coroutines.suspendCoroutine
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
-import okhttp3.Request
-import com.lagradost.cloudstream3.ui.settings.Globals.TV
-import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
-import android.content.Intent
-import android.net.Uri
 
 /**
  * SportzxLiveEventsProvider
@@ -81,7 +66,7 @@ class SportzxLiveEventsProvider(
         return if (info != null &&
                    !info.teamA.isNullOrBlank() &&
                    !info.teamB.isNullOrBlank()) {
-            if (info.teamA == info.teamB) info.teamA
+            if (isSameTeam(info.teamA, info.teamB)) info.teamA
             else "${info.teamA} vs ${info.teamB}"
         } else {
             event.title
@@ -126,31 +111,39 @@ class SportzxLiveEventsProvider(
         } catch (e: Exception) { false }
     }
 
+    private fun isSameTeam(a: String?, b: String?): Boolean {
+        if (a.isNullOrBlank() || b.isNullOrBlank()) return false
+        return a.trim().equals(b.trim(), ignoreCase = true)
+    }
+
     /** Generates the CNCVerse match-card poster URL. */
     private fun generateMatchCardUrl(event: SportzxLiveEventData): String {
         val info = event.eventInfo
         val title   = java.net.URLEncoder.encode(info?.eventName ?: event.title, "UTF-8")
         val teamA   = java.net.URLEncoder.encode(info?.teamA ?: "Team A", "UTF-8")
         val teamB   = java.net.URLEncoder.encode(info?.teamB ?: "Team B", "UTF-8")
-        val teamAImg = info?.teamAFlag ?: ""
-        val teamBImg = info?.teamBFlag ?: ""
+        val sameTeams = isSameTeam(info?.teamA, info?.teamB)
+        val teamAImg = info?.teamAFlag?.takeIf { it.isNotBlank() }
+            ?: (if (sameTeams) info?.teamBFlag else null)
+            ?: ""
+        val teamBImg = if (sameTeams) "" else info?.teamBFlag ?: ""
         val eventLogo = info?.eventLogo ?: ""
         val isLive  = isEventLive(event)
         val isEnded = isEventEnded(event)
         val time = try {
             info?.startTime?.let {
                 val df = SimpleDateFormat("yyyy/MM/dd HH:mm:ss Z", Locale.US)
-                val disp = SimpleDateFormat("MMM dd, yyyy hh:mm a", Locale.US)
+                val disp = SimpleDateFormat("MMM dd, yyyy hh:mm a z", Locale.US)
                 val d = df.parse(it)
                 d?.let { dd -> java.net.URLEncoder.encode(disp.format(dd), "UTF-8") } ?: ""
             } ?: ""
         } catch (e: Exception) { "" }
 
         return buildString {
-            append("https://live-card-png.cricify.workers.dev/?")
+            append("https://card.cncverse.dpdns.org/?")
             append("title=$title")
             append("&teamA=$teamA")
-            append("&teamB=$teamB")
+            if (!sameTeams) append("&teamB=$teamB")
             if (teamAImg.isNotBlank()) append("&teamAImg=$teamAImg")
             if (teamBImg.isNotBlank()) append("&teamBImg=$teamBImg")
             if (eventLogo.isNotBlank()) append("&eventLogo=$eventLogo")
@@ -163,6 +156,7 @@ class SportzxLiveEventsProvider(
     // ── Main page ─────────────────────────────────────────────────────────────
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        SportzxProviderManager.refreshFromFirebase()
         val events = if (customLink != null) SportzxProviderManager.fetchLiveEvents(customLink)
         else SportzxProviderManager.fetchLiveEvents()
 
@@ -288,7 +282,7 @@ class SportzxLiveEventsProvider(
                 it.startTime?.let { st ->
                     try {
                         val df   = SimpleDateFormat("yyyy/MM/dd HH:mm:ss Z", Locale.US)
-                        val disp = SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.US)
+                        val disp = SimpleDateFormat("MMM dd, yyyy HH:mm z", Locale.US)
                         val d = df.parse(st)
                         d?.let { dd -> append("🕐 ${disp.format(dd)}\n") }
                     } catch (e: Exception) { append("🕐 $st\n") }
@@ -335,7 +329,8 @@ class SportzxLiveEventsProvider(
             val url   = parts[0].trim()
             if (url.isBlank()) return@forEach
 
-            val drmParts = stream.api?.split(":", limit = 2)
+            val decryptedApi = stream.api?.trim()?.let { decodeApi(it) }
+            val drmParts = decryptedApi?.split(":", limit = 2)
 
             // Parse headers after |
             val headers = mutableMapOf<String, String>()
@@ -363,11 +358,6 @@ class SportzxLiveEventsProvider(
 
                             val kidHex = drmParts[0].trim().replace("-", "")
                             val keyHex = drmParts[1].trim().replace("-", "")
-
-                            fun hexToBase64Url(hex: String): String? = try {
-                                val bytes = hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
-                                Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
-                            } catch (_: Exception) { null }
 
                             val kidB64 = hexToBase64Url(kidHex)
                             val keyB64 = hexToBase64Url(keyHex)
@@ -410,12 +400,13 @@ class SportzxLiveEventsProvider(
                             finalHeaders["User-Agent"] =
                                 "Mozilla/5.0 (Linux; Android 10; Pixel 3 XL) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
                         }
+                        val type = if (url.contains(".m3u") || url.contains(".m3u8")) ExtractorLinkType.M3U8 else INFER_TYPE
                         callback.invoke(
                             newExtractorLink(
                                 source = this.name,
                                 name   = serverName,
                                 url    = url,
-                                type   = ExtractorLinkType.M3U8
+                                type   = type
                             ) {
                                 this.quality = Qualities.Unknown.value
                                 if (finalHeaders.isNotEmpty()) this.headers = finalHeaders
@@ -430,4 +421,69 @@ class SportzxLiveEventsProvider(
 
         return true
     }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /**
+     * Stream `api` values are either a plain `kid:key` pair or an obfuscated blob:
+     * char-shift → base64 → char-shift, with the shift brute-forced until a
+     * `kid:<32 hex>` pair falls out. Falls back to the raw value.
+     */
+    private fun decodeApi(api: String): String {
+        if (api.contains(":")) return api
+        for (shift in 0 until 1001) {
+            try {
+                val decoded = String(Base64.decode(shiftChar(api, shift), 0), Charsets.UTF_8)
+                val candidate = shiftChar(decoded, shift)
+                val parts = candidate.split(":", limit = 2)
+                if (parts.size == 2 && parts[1].length == 32 && parts[1].all { it in "0123456789abcdefABCDEF" }) {
+                    return candidate
+                }
+            } catch (_: Exception) {
+            }
+        }
+        return api
+    }
+
+    private fun shiftChar(str: String, shift: Int): String {
+        if (str.isEmpty() || shift == 0) return str
+        val pos = str.length - ((shift - 1).coerceAtLeast(0) % str.length + 1)
+        var ch = str[pos]
+        val alphabets = listOf("abcdefghijklmnopqrstuvwxyz", "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "0123456789")
+        var alphaIdx = -1
+        var charIdx = -1
+        for (idx in alphabets.indices) {
+            val p = alphabets[idx].indexOf(ch)
+            if (p != -1) {
+                alphaIdx = idx
+                charIdx = p
+                break
+            }
+        }
+        if (alphaIdx != -1) {
+            var remainingShift = shift
+            while (remainingShift > 0) {
+                val currentAlpha = alphabets[alphaIdx]
+                if (remainingShift > currentAlpha.length - 1 - charIdx) {
+                    remainingShift -= currentAlpha.length - charIdx
+                    alphaIdx = when (alphaIdx) {
+                        0 -> 2
+                        1 -> 0
+                        else -> 1
+                    }
+                    charIdx = 0
+                } else {
+                    charIdx += remainingShift
+                    remainingShift = 0
+                }
+            }
+            ch = alphabets[alphaIdx][charIdx]
+        }
+        return str.substring(0, pos) + ch + str.substring(pos + 1)
+    }
+
+    private fun hexToBase64Url(hex: String): String? = try {
+        val bytes = hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+        Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+    } catch (_: Exception) { null }
 }

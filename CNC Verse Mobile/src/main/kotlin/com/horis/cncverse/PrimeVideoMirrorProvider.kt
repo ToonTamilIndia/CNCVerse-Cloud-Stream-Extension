@@ -2,14 +2,12 @@ package com.horis.cncverse
 
 import android.content.Context
 import com.horis.cncverse.entities.EpisodesData
+import com.horis.cncverse.entities.PlayList
 import com.horis.cncverse.entities.PostData
 import com.horis.cncverse.entities.SearchData
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
-import com.lagradost.cloudstream3.utils.ExtractorLink
-import okhttp3.Interceptor
-import okhttp3.Response
 import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.APIHolder.unixTime
 
@@ -49,42 +47,50 @@ class PrimeVideoMirrorProvider : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        primeBypass(mainUrl)
-        val data = app.get("$mainUrl/pv/homepage.php", headers = headers).parsed<PvHomepageData>()
-        val homePageLists = mutableListOf<HomePageList>()
-
-        data.slider?.let { sliders ->
-            val sliderItems = sliders.mapNotNull { item ->
-                newAnimeSearchResponse(item.title ?: "", Id(item.id).toJson()) {
-                    posterUrl = "https://imgcdn.kim/pv/v/${item.id}.jpg"
-                    posterHeaders = mapOf("Referer" to "$mainUrl/home")
-                }
-            }
-            if (sliderItems.isNotEmpty()) {
-                homePageLists.add(HomePageList("Featured", sliderItems, isHorizontalImages = true))
-            }
+        cookie_value = bypass(mainUrl)
+        val cookies = mapOf(
+            "t_hash_t" to cookie_value,
+            "ott" to "pv",
+            "hd" to "on"
+        )
+        val document = app.get(
+            "$mainUrl/mobile/home?app=1",
+            cookies = cookies,
+            headers = headers,
+            referer = "$mainUrl/mobile/home?app=1",
+        ).document
+        val items = document.select(".tray-container, #top10").map {
+            it.toHomePageList()
         }
+        return newHomePageResponse(items, false)
+    }
 
-        data.post?.forEach { cat ->
-            val idList = cat.ids.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-            val items = idList.map { id ->
-                newAnimeSearchResponse("", Id(id).toJson()) {
-                    posterUrl = "https://imgcdn.kim/pv/v/$id.jpg"
-                    posterHeaders = mapOf("Referer" to "$mainUrl/home")
-                }
-            }
-            if (items.isNotEmpty()) {
-                homePageLists.add(HomePageList(cat.cate, items, isHorizontalImages = false))
-            }
+    private fun Element.toHomePageList(): HomePageList {
+        val name = select("h2, span").text()
+        val items = select("article, .top10-post").mapNotNull {
+            it.toSearchResult()
         }
+        return HomePageList(name, items, isHorizontalImages = false)
+    }
 
-        return newHomePageResponse(homePageLists, false)
+    private fun Element.toSearchResult(): SearchResponse? {
+        val id = selectFirst("a")?.attr("data-post") ?: attr("data-post")
+
+        return newAnimeSearchResponse("", Id(id).toJson()) {
+            this.posterUrl = "https://imgcdn.kim/pv/v/$id.jpg"
+            posterHeaders = mapOf("Referer" to "$mainUrl/home")
+        }
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        primeBypass(mainUrl)
-        val url = "$mainUrl/pv/search.php?s=$query"
-        val data = app.get(url, headers = headers, referer = "$mainUrl/home").parsed<SearchData>()
+        cookie_value = bypass(mainUrl)
+        val cookies = mapOf(
+            "t_hash_t" to cookie_value,
+            "hd" to "on",
+            "ott" to "pv"
+        )
+        val url = "$mainUrl/mobile/pv/search.php?s=$query&t=${APIHolder.unixTime}"
+        val data = app.get(url, referer = "$mainUrl/home", cookies = cookies).parsed<SearchData>()
 
         return data.searchResult.map {
             newAnimeSearchResponse(it.t, Id(it.id).toJson()) {
@@ -95,7 +101,7 @@ class PrimeVideoMirrorProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        cookie_value = ensureBypass(mainUrl)
+        cookie_value = bypass(mainUrl)
         val id = parseJson<Id>(url).id
         val cookies = mapOf(
             "t_hash_t" to cookie_value,
@@ -137,13 +143,13 @@ class PrimeVideoMirrorProvider : MainAPI() {
                 name = data.title
             })
         } else {
-            data.episodes.filterNotNull().mapTo(episodes) {
-                newEpisode(LoadData(title, it.id)) {
-                    this.name = it.t
-                    this.episode = it.ep.replace("E", "").toIntOrNull()
-                    this.season = it.s.replace("S", "").toIntOrNull()
-                    this.posterUrl = "https://imgcdn.kim/pvepimg/${it.id}.jpg"
-                    this.runTime = it.time.replace("m", "").toIntOrNull()
+            data.episodes.filterNotNull().mapTo(episodes) { ep ->
+                newEpisode(LoadData(title, ep.id)) {
+                    this.name = ep.t
+                    this.episode = ep.ep.replace("E", "").toIntOrNull()
+                    this.season = ep.s.replace("S", "").toIntOrNull()
+                    this.posterUrl = "https://imgcdn.kim/pvepimg/${ep.id}.jpg"
+                    this.runTime = ep.time.replace("m", "").toIntOrNull()
                 }
             }
 
@@ -211,66 +217,55 @@ class PrimeVideoMirrorProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        cookie_value = ensureBypass(mainUrl)
-        val ld = parseJson<LoadData>(data)
-        return netMirrorMobileLoadLinks(
-            mainUrl = mainUrl,
-            id = ld.id,
-            title = ld.title,
-            playlistPath = "/mobile/pv/playlist.php",
-            baseCookies = mapOf("hd" to "on", "ott" to "pv"),
-            name = name,
-            subtitleCallback = subtitleCallback,
-            callback = callback
+        cookie_value = bypass(mainUrl)
+        val (title, id) = parseJson<LoadData>(data)
+        val cookies = mapOf(
+            "t_hash_t" to cookie_value,
+            "ott" to "pv",
+            "hd" to "on"
         )
-    }
-
-    data class PvSliderItem(
-        val id: String,
-        val title: String? = null,
-        val desc: String? = null,
-        val img: String? = null
-    )
-
-    data class PvCategoryItem(
-        val cate: String,
-        val ids: String
-    )
-
-    data class PvHomepageData(
-        val slider: List<PvSliderItem>? = null,
-        val post: List<PvCategoryItem>? = null
-    )
-
-    @Suppress("ObjectLiteralToLambda")
-    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        val sessionCookie = buildList {
-            add("hd=on")
-            add("ott=pv")
-            if (cookie_value.isNotEmpty()) add("t_hash_t=$cookie_value")
-        }.joinToString("; ")
-        val videoHeaders = mapOf(
-            "User-Agent" to NETMIRROR_MOBILE_UA,
-            "Cookie" to sessionCookie
+        val cookieStr = cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
+        val referer = "$mainUrl/mobile/home?app=1"
+        val playlistHeaders = mapOf(
+            "Accept" to "*/*",
+            "Accept-Language" to "en-IN,en-US;q=0.9,en;q=0.8",
+            "Connection" to "keep-alive",
+            "Cookie" to cookieStr,
+            "Referer" to referer,
+            "sec-ch-ua" to "\"Android WebView\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+            "sec-ch-ua-mobile" to "?0",
+            "sec-ch-ua-platform" to "\"Android\"",
+            "Sec-Fetch-Dest" to "empty",
+            "Sec-Fetch-Mode" to "cors",
+            "Sec-Fetch-Site" to "same-origin",
+            "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.91 Safari/537.36 /OS.Gatu v3.0",
+            "X-Requested-With" to "app.netmirror.netmirrornew"
         )
-        return object : Interceptor {
-            override fun intercept(chain: Interceptor.Chain): Response {
-                val request = chain.request()
-                val rawUrl = request.url.toString()
-                val targetUrl = if (rawUrl.startsWith("https:///")) {
-                    rawUrl.replace("https:///", "$mainUrl/")
-                } else rawUrl
+        val playlist = app.get(
+            "$mainUrl/mobile/pv/playlist.php?id=$id&t=$title&tm=${APIHolder.unixTime}",
+            headers = playlistHeaders,
+            referer = referer
+        ).parsed<PlayList>()
 
-                val builder = request.newBuilder().url(targetUrl)
-                for ((key, value) in videoHeaders) {
-                    builder.header(key, value)
-                }
-                if (request.header("Referer").isNullOrBlank()) {
-                    builder.header("Referer", extractorLink.referer)
-                }
-                return chain.proceed(builder.build())
+        playlist.forEach { item ->
+            item.sources.forEach { source ->
+                callback.invoke(
+                    newExtractorLink(name, source.label, mainUrl + source.file, ExtractorLinkType.M3U8) {
+                        this.headers = playlistHeaders
+                        this.referer = referer
+                        this.quality = getQualityFromName(source.file.substringAfter("q=", ""))
+                    }
+                )
+            }
+            item.tracks?.filter { it.kind == "captions" }?.forEach { track ->
+                subtitleCallback.invoke(
+                    newSubtitleFile(track.label.toString(), httpsify(track.file.toString().replace("\\", ""))) {
+                        this.headers = mapOf("Referer" to "$mainUrl/")
+                    }
+                )
             }
         }
+        return true
     }
 
     data class Id(val id: String)

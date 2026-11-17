@@ -1,5 +1,5 @@
 // use an integer for version numbers
-version = 18
+version = 28
 
 
 cloudstream {
@@ -24,5 +24,5 @@ cloudstream {
     )
     language = "bn"
 
-    iconUrl = "https://movielinkbd.one/img/favicon-192x192.png"
+    iconUrl = "https://raw.githubusercontent.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/master/MovieLinkBDProvider/icon.webp"
 }

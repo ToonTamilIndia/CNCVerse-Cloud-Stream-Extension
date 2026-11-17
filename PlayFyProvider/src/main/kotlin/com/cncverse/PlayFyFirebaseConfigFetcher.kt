@@ -33,20 +33,20 @@ object PlayFyFirebaseConfigFetcher {
         try {
             val appInstanceId = UUID.randomUUID().toString().replace("-", "")
             val payload = """
-                {
-                    "appVersion": "1.7",
-                    "appInstanceIdToken": "",
-                    "languageCode": "en-IN",
-                    "appBuild": "8",
-                    "appInstanceId": "$appInstanceId",
-                    "countryCode": "IN",
-                    "analyticsUserProperties": {},
-                    "appId": "$APP_ID",
-                    "platformVersion": "33",
-                    "sdkVersion": "22.1.2",
-                    "packageName": "$PACKAGE_NAME"
-                }
-            """.trimIndent()
+                    {
+                        "appVersion": "1.7",
+                        "appInstanceIdToken": "",
+                        "languageCode": "en-IN",
+                        "appBuild": "8",
+                        "appInstanceId": "$appInstanceId",
+                        "countryCode": "IN",
+                        "analyticsUserProperties": {},
+                        "appId": "$APP_ID",
+                        "platformVersion": "33",
+                        "sdkVersion": "22.1.2",
+                        "packageName": "$PACKAGE_NAME"
+                    }
+                """.trimIndent()
 
             val request = Request.Builder()
                 .url("https://firebaseremoteconfig.googleapis.com/v1/projects/$PROJECT_NUMBER/namespaces/firebase:fetch")
@@ -80,20 +80,5 @@ object PlayFyFirebaseConfigFetcher {
 
     suspend fun getBaseUrl(): String? {
         return fetchRemoteConfig()?.get("baseUrl")?.trimEnd('/')
-    }
-
-    suspend fun getBaseApiUrl(): String? {
-        val entries = fetchRemoteConfig()
-        return entries?.get("api_url")?.trimEnd('/')
-    }
-
-    suspend fun getTelegramUrl(): String? {
-        val entries = fetchRemoteConfig()
-        return entries?.get("new_telegram_url") ?: entries?.get("telegram_url")
-    }
-
-    suspend fun getWebUrl(): String? {
-        val entries = fetchRemoteConfig()
-        return entries?.get("web_url")
     }
 }

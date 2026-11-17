@@ -124,33 +124,30 @@ data class SportzxLiveEventFormat(
 
 object SportzxProviderManager {
 
-    @Volatile private var cachedBaseUrl: String? = null
+    private val baseUrlValue = ExpiringRemoteValue()
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
+        .addInterceptor(StaleDomainInterceptor(baseUrlValue))
         .build()
 
     private val baseHeaders = mapOf(
         "User-Agent" to "Dalvik/2.1.0 (Linux; Android 13)"
     )
 
-    // ── URL resolution ────────────────────────────────────────────────────────
-
-    /**
-     * Returns the effective API base URL (no trailing slash).
-     * Priority: Firebase Remote Config → cached value.
-     */
-    suspend fun getBaseUrl(): String {
-        cachedBaseUrl?.let { return it }
-        val firebaseUrl = SportzxFirebaseFetcher.getBaseApiUrl()
-        cachedBaseUrl = if (!firebaseUrl.isNullOrBlank()) firebaseUrl.trimEnd('/')
-                        else ""
-        return cachedBaseUrl!!
+    fun refreshFromFirebase() {
+        baseUrlValue.reset()
     }
 
+    // ── URL resolution ────────────────────────────────────────────────────────
+
+    /** Returns the effective API base URL (no trailing slash), or "" when unresolved. */
+    suspend fun getBaseUrl(): String =
+        baseUrlValue.get({ SportzxFirebaseFetcher.getBaseApiUrl()?.trimEnd('/') }, { "" })
+
     fun invalidateCache() {
-        cachedBaseUrl = null
+        baseUrlValue.reset()
     }
 
     // ── Private fetch+decrypt helper ──────────────────────────────────────────
@@ -201,8 +198,7 @@ object SportzxProviderManager {
             try {
                 val categories = parseJson<List<SportzxCategoryData>>(json)
                 categories.mapIndexedNotNull { index, cat ->
-                    val catLink = cat.catLink?.trim()
-                    if (catLink.isNullOrBlank()) return@mapIndexedNotNull null
+                    val catLink = cat.catLink?.trim() ?: return@mapIndexedNotNull null
                     mapOf(
                         "id" to (cat.id?.toIntOrNull() ?: (index + 1)),
                         "title" to cat.title,
@@ -232,12 +228,13 @@ object SportzxProviderManager {
             try {
                 val events = parseJson<List<SportzxEventData>>(json)
                 events.mapIndexedNotNull { index, ev ->
-                    if (ev.publish == "1") return@mapIndexedNotNull null
+                    if (ev.publish != "1") return@mapIndexedNotNull null
                     val eventId = ev.id ?: return@mapIndexedNotNull null
                     val title = ev.title ?: "Unknown Event"
-                    val image = if (ev.image.isNullOrBlank() || ev.image == "o") null else ev.image
-                    val cat = ev.cat
                     val info = ev.eventInfo
+                    val banner = info?.eventBanner?.takeIf { it != "null" }
+                    val image = banner ?: ev.image?.takeIf { it != "o" }
+                    val cat = ev.cat
                     val endTime = if (path.contains("highlights", ignoreCase = true)) "1970/01/01 00:00:00 +0000" else info?.endTime
                     val liveEventInfo = SportzxLiveEventInfo(
                         teamA = info?.teamA,
@@ -246,16 +243,16 @@ object SportzxProviderManager {
                         teamBFlag = info?.teamBFlag,
                         eventCat = cat,
                         eventName = info?.eventName ?: ev.title,
-                        eventLogo = info?.eventLogo,
+                        eventLogo = banner,
                         isHot = info?.isHot,
-                        eventType = if (info == null || info.eventType.isNullOrBlank() || info.eventType == "null") null else info.eventType,
+                        eventType = info?.eventType?.takeIf { it != "null" },
                         startTime = info?.startTime,
                         endTime = endTime
                     )
                     val formats = ev.formatsNew?.map { fmt ->
                         SportzxLiveEventFormat(
                             title = fmt.title,
-                            logo = if (fmt.logo.isNullOrBlank()) null else fmt.logo
+                            logo = fmt.logo?.takeIf { it.isNotBlank() }
                         )
                     } ?: emptyList()
                     SportzxLiveEventData(
@@ -283,18 +280,13 @@ object SportzxProviderManager {
 
     suspend fun fetchStreamData(eventId: Int): String? = fetchStreamData(eventId.toString())
 
-    suspend fun fetchStreamData(eventId: String): String? = withContext(Dispatchers.IO) {
-        try {
-            val baseUrl = getBaseUrl()
-            if (baseUrl.isBlank()) return@withContext null
-            val primary = fetchDecrypted("$baseUrl/channels/$eventId.json")
-            if (primary != null) return@withContext primary
-            println("Sportzx: Primary channel URL failed, trying fallback ${eventId}e.json")
-            fetchDecrypted("$baseUrl/channels/${eventId}e.json")
-        } catch (e: Exception) {
-            println("Sportzx: fetchStreamData exception — ${e.message}")
-            null
-        }
+    suspend fun fetchStreamData(eventId: String): String? {
+        val baseUrl = getBaseUrl()
+        if (baseUrl.isBlank()) return null
+        val primary = fetchDecrypted("$baseUrl/channels/$eventId.json")
+        if (primary != null) return primary
+        println("Sportzx: Primary channel URL failed, trying fallback ${eventId}e.json")
+        return fetchDecrypted("$baseUrl/channels/${eventId}e.json")
     }
 
     // ── fetchVODCategory → /cats/{catLink}.json ──────────────────────────────

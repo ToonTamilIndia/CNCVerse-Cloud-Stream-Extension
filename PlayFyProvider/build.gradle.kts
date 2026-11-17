@@ -1,4 +1,4 @@
-version = 9
+version = 20
 
 
 dependencies {
@@ -8,15 +8,11 @@ dependencies {
 
 android {
     defaultConfig {
-        // AES key/IV, substitution alphabets and the key-derivation seeds used
-        // by PlayFyCryptoUtils. Declared here instead of being hardcoded in
-        // Kotlin. No environment variables involved.
+        // Key-derivation seeds and fallback AES key/IV used by PlayFyCryptoUtils.
+        // Declared here instead of being hardcoded in Kotlin. No environment
+        // variables involved.
         buildConfigField("String", "PLAYFY_DEFAULT_LORA", "\"zH7hY9@lO=8uXk#f%mI/VvJd2G10Z5eU+L6Pi&aEbwA4scBCStQ3KyWqRjDgnoMRP\"")
         buildConfigField("String", "PLAYFY_DEFAULT_SIG", "\"Mc1pOdG+rjLRsO8tlGCxcBFqGIU\"")
-        buildConfigField("String", "PLAYFY_AES_KEY", "\"hg47Dd84jfK83ncG\"")
-        buildConfigField("String", "PLAYFY_AES_IV", "\"47hgD84sjG83nFkH\"")
-        buildConfigField("String", "PLAYFY_SHUFFLED_ALPHABET", "\"fFgGjJkKaApPbBmMoOzZeEnNcCdDrRqQtTvVuUxXhHiIwWyYlLsS\"")
-        buildConfigField("String", "PLAYFY_STANDARD_ALPHABET", "\"aAbBcCdDeEfFgGhHiIjJkKlLmMnNoOpPqQrRsStTuUvVwWxXyYzZ\"")
         buildConfigField("String", "PLAYFY_FALLBACK_KEY", "\"ouAzyvGQqd5yAi5G\"")
         buildConfigField("String", "PLAYFY_FALLBACK_IV", "\"QC4a1NX)XXEHq1bf\"")
     }

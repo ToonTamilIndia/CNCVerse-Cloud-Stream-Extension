@@ -1,48 +1,75 @@
 package com.cncverse
 
-import android.util.Log
-import com.lagradost.cloudstream3.Episode
+import android.app.AlertDialog
+import android.content.Context
+import android.content.SharedPreferences
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
+import android.util.Base64
+import android.view.KeyEvent
+import android.view.MotionEvent
+import android.view.View
+import android.view.ViewGroup
+import android.view.ViewTreeObserver
+import android.webkit.CookieManager
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.TextView
+import com.lagradost.cloudstream3.Actor
+import com.lagradost.cloudstream3.ActorData
 import com.lagradost.cloudstream3.HomePageList
 import com.lagradost.cloudstream3.HomePageResponse
 import com.lagradost.cloudstream3.LoadResponse
+import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import com.lagradost.cloudstream3.MainAPI
 import com.lagradost.cloudstream3.MainPageRequest
+import com.lagradost.cloudstream3.Score
 import com.lagradost.cloudstream3.SearchResponse
+import com.lagradost.cloudstream3.ShowStatus
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.TvType
+import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.mainPageOf
 import com.lagradost.cloudstream3.newEpisode
 import com.lagradost.cloudstream3.newHomePageResponse
 import com.lagradost.cloudstream3.newMovieLoadResponse
 import com.lagradost.cloudstream3.newMovieSearchResponse
 import com.lagradost.cloudstream3.newTvSeriesLoadResponse
-import com.lagradost.cloudstream3.network.CloudflareKiller
+import com.lagradost.cloudstream3.ui.settings.Globals.TV
+import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
-import com.lagradost.cloudstream3.utils.loadExtractor
-import android.content.Context
+import com.lagradost.cloudstream3.utils.newExtractorLink
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import okhttp3.Headers
-import okhttp3.OkHttpClient
-import okhttp3.Request
 import org.json.JSONObject
+import org.json.JSONTokener
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.net.URI
-import java.util.concurrent.TimeUnit
+import java.net.URLEncoder
+import java.util.concurrent.ConcurrentHashMap
+import kotlin.coroutines.resume
+import kotlin.coroutines.suspendCoroutine
 
 class MovieLinkBDProvider : MainAPI() {
     companion object {
         var appContext: Context? = null
-        private const val FALLBACK_URL = "https://movielinkbd.li"
-        private const val BROWSER_DEBOUNCE_MS = 10000L
-        @Volatile private var lastBrowserOpenMs = 0L
+        private const val HUB_URL = "https://movielinkbd.com"
+        private const val FALLBACK_URL = "https://2gsyne.movielinkbd.at"
+        private const val PREF_KEY = "movielinkbd_main_url"
+        private val MIRROR_REGEX =
+            Regex("^https?://([a-z0-9]+)\\.movielinkbd\\.([a-z]+)(?:/|$)", RegexOption.IGNORE_CASE)
+        private val NON_MIRROR_SUBDOMAINS = setOf("www", "fast", "watch", "cdn", "static")
     }
 
     override var mainUrl = FALLBACK_URL
@@ -79,162 +106,88 @@ class MovieLinkBDProvider : MainAPI() {
     )
 
     private val headers = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept-Language" to "en-US,en;q=0.9"
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language" to "en-US,en;q=0.9",
+        "Sec-Fetch-Dest" to "document",
+        "Sec-Fetch-Mode" to "navigate",
+        "Sec-Fetch-Site" to "none",
+        "Sec-Fetch-User" to "?1",
+        "Upgrade-Insecure-Requests" to "1"
     )
 
     @Volatile private var resolvedBase: String? = null
+    @Volatile private var hpToken: String? = null
+    @Volatile private var webCookies: String? = null
+    @Volatile private var webViewUa: String? = null
 
-    // ── Custom OkHttp clients with Cloudflare bypass ─────────────────────────
-    private val cfClient by lazy {
-        OkHttpClient.Builder()
-            .addInterceptor(CloudflareKiller())
-            .connectTimeout(30, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
-            .build()
-    }
+    private val mgTokens = ConcurrentHashMap<String, MgToken>()
+    private val cdnStreamRegex =
+        Regex("^(https?://([a-z0-9.-]+)/p/[A-Za-z0-9._%-]+)(\\?.*)?$", RegexOption.IGNORE_CASE)
+    private val hpTokenRegex = Regex("mlbd_hp=(?:\"\\s*\\+\\s*\")?([0-9]+\\.[0-9a-fA-F]+)")
+    private val verifyMutex = Mutex()
 
-    private val noRedirectClient by lazy {
-        cfClient.newBuilder()
-            .followRedirects(false)
-            .followSslRedirects(false)
-            .build()
-    }
+    private data class MgToken(val value: String, val expiresAtSec: Long)
 
-    // ── HTTP helpers ─────────────────────────────────────────────────────────
-    private suspend fun httpGetText(url: String, headers: Map<String, String> = emptyMap()): String {
-        return withContext(Dispatchers.IO) {
-            val reqHeaders = Headers.Builder()
-            for ((k, v) in headers) reqHeaders.add(k, v)
-            val request = Request.Builder().url(url).headers(reqHeaders.build()).get().build()
-            val response = cfClient.newCall(request).execute()
-            response.body.string().also { response.close() }
-        }
-    }
-
-    private suspend fun httpGetDoc(url: String, headers: Map<String, String> = emptyMap()): Document {
-        val html = httpGetText(url, headers)
-        return Jsoup.parse(html, url)
-    }
-
-    /** HEAD probe to detect direct media responses (extension-less CDN URLs). */
-    private suspend fun probeContentType(url: String, refererUrl: String): String? {
-        return withContext(Dispatchers.IO) {
-            try {
-                val probeHeaders = headers + mapOf("Referer" to refererUrl)
-                val headRequest = Request.Builder().url(url).headers(buildHeaders(probeHeaders)).head().build()
-                cfClient.newCall(headRequest).execute().use { response ->
-                    if (response.isSuccessful) return@withContext(response.header("Content-Type"))
-                }
-                // Fallback: ranged GET (some servers reject HEAD)
-                val getRequest = Request.Builder().url(url).headers(buildHeaders(probeHeaders))
-                    .header("Range", "bytes=0-0").build()
-                cfClient.newCall(getRequest).execute().use { response ->
-                    if (response.isSuccessful) response.header("Content-Type") else null
-                }
-            } catch (_: Exception) {
-                null
-            }
-        }
-    }
-
-    private fun buildHeaders(headerMap: Map<String, String>): Headers {
-        val builder = Headers.Builder()
-        for ((k, v) in headerMap) builder.add(k, v)
-        return builder.build()
-    }
-
-    // ── Fix URL domain for movielinkbd links ─────────────────────────────────
-    private fun fixUrlDomain(url: String, base: String): String {
-        if (url.isEmpty()) return url
-        return try {
-            val uri = URI(url)
-            val host = uri.host
-            if (host == null || !host.contains("movielinkbd") || host.contains("play")) return url
-            val path = uri.rawPath ?: ""
-            val query = uri.rawQuery?.let { "?$it" } ?: ""
-            val fragment = uri.rawFragment?.let { "#$it" } ?: ""
-            "${base.trimEnd('/')}/${path.trimStart('/')}$query$fragment"
-        } catch (_: Exception) {
-            url
-        }
-    }
-
-    // ── Resolve the live mirror URL ─────────────────────────────────────────
-    private val baseCandidates = listOf(
-        FALLBACK_URL,
-        "https://open.movielinkbd.li",
-        "https://movielinkbd.com",
-        "https://www.movielinkbd.one"
+    private data class PlayerEpisode(
+        val name: String?,
+        val season: Int,
+        val number: Int,
+        val links: List<String>
     )
 
-    private fun isValidMlbdHome(html: String): Boolean {
-        if (html.length < 500) return false
-        val lower = html.lowercase()
-        return lower.contains("movie-card") || lower.contains("mlbd-img") ||
-            lower.contains("movielinkbd") && lower.contains("<!doctype")
-    }
-
-    /** Follows the redirect chain manually so the final (rotating) host is known. */
-    private suspend fun followRedirects(url: String, maxHops: Int = 6): String? {
-        return withContext(Dispatchers.IO) {
-            var current = url
-            var hops = 0
-            while (hops < maxHops) {
-                hops++
-                try {
-                    val request = Request.Builder().url(current)
-                        .header("User-Agent", headers["User-Agent"] ?: "Mozilla/5.0")
-                        .header("Accept-Language", "en-US,en;q=0.9")
-                        .get().build()
-                    noRedirectClient.newCall(request).execute().use { response ->
-                        val location = response.header("Location")
-                        if (response.isRedirect && !location.isNullOrEmpty()) {
-                            current = URI(current).resolve(location).toString()
-                            null
-                        } else {
-                            current
-                        }
-                    }?.let { return@withContext(it) }
-                } catch (_: Exception) {
-                    return@withContext(null)
-                }
-            }
-            current
-        }
-    }
-
+    // ── Live mirror resolution ──────────────────────────────────────────────
     private suspend fun getBase(): String {
         resolvedBase?.let { return it }
-        for (candidate in baseCandidates) {
-            val finalUrl = try {
-                followRedirects(candidate)
-            } catch (_: Exception) {
-                null
-            } ?: continue
-            val uri = try {
-                URI(finalUrl)
-            } catch (_: Exception) {
-                continue
-            }
-            val host = uri.host?.lowercase() ?: continue
-            if (!host.contains("movielinkbd")) continue
-            val base = "${uri.scheme}://$host"
-            val html = try {
-                httpGetText("$base/", headers)
-            } catch (_: Exception) {
-                ""
-            }
-            if (!isValidMlbdHome(html)) continue
-
-            resolvedBase = base
-            if (base != mainUrl) mainUrl = base
-            return base
-        }
-        return FALLBACK_URL
+        val base = resolveFromHub() ?: savedBase() ?: FALLBACK_URL
+        resolvedBase = base
+        mainUrl = base
+        return base
     }
 
-    // ── Homepage / category pages ───────────────────────────────────────────
+    /** The hub links to the current mirror many times; the most linked host wins. */
+    private suspend fun resolveFromHub(): String? {
+        return try {
+            val doc = app.get(HUB_URL, headers = headers, timeout = 15L).document
+            val base = doc.select("a[href]").asSequence()
+                .mapNotNull { mirrorBase(it.attr("href")) }
+                .groupingBy { it }
+                .eachCount()
+                .maxByOrNull { it.value }
+                ?.key ?: return null
+            saveBase(base)
+            base
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun mirrorBase(url: String): String? {
+        val m = MIRROR_REGEX.find(url.trim()) ?: return null
+        val sub = m.groupValues[1].lowercase()
+        if (sub in NON_MIRROR_SUBDOMAINS) return null
+        return "https://$sub.movielinkbd.${m.groupValues[2].lowercase()}"
+    }
+
+    private fun prefs(): SharedPreferences? =
+        appContext?.getSharedPreferences("com.lagradost.cloudstream3", Context.MODE_PRIVATE)
+
+    private fun savedBase(): String? {
+        return try {
+            prefs()?.getString(PREF_KEY, null)?.let { mirrorBase(it) }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun saveBase(base: String) {
+        try {
+            prefs()?.edit()?.putString(PREF_KEY, base)?.apply()
+        } catch (_: Exception) {
+        }
+    }
+
+    // ── Homepage / search ───────────────────────────────────────────────────
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val base = getBase()
         val path = request.data
@@ -244,759 +197,498 @@ class MovieLinkBDProvider : MainAPI() {
             page == 1 -> "$base$path"
             else -> "$base$path/page/$page"
         }
-        val doc = httpGetDoc(url, headers)
-        val items = parseMovieCards(doc, base)
-        return newHomePageResponse(
-            HomePageList(request.name, items, isHorizontalImages = true),
-            hasNext = items.isNotEmpty()
-        )
+        val items = parseMovieCards(httpGetDoc(url))
+        return newHomePageResponse(HomePageList(request.name, items), items.isNotEmpty())
     }
 
-    // ── Search ──────────────────────────────────────────────────────────────
     override suspend fun search(query: String): List<SearchResponse> {
         val base = getBase()
-        val encoded = java.net.URLEncoder.encode(query.trim(), "UTF-8")
-        val doc = httpGetDoc("$base/search?q=$encoded", headers)
-        return parseMovieCards(doc, base)
+        val encodedQuery = URLEncoder.encode(query.trim(), "UTF-8")
+        return parseMovieCards(httpGetDoc("$base/search?q=$encodedQuery"))
     }
 
-    // ── Parse movie cards from listing pages ───────────────────────────────
-    private fun parseMovieCards(doc: Document, base: String): List<SearchResponse> {
-        val results = mutableListOf<SearchResponse>()
-        val cards = doc.select("div.movie-item, div.item-box, div.film-item, div.post-item, .movie-card")
-        if (cards.isNotEmpty()) {
-            cards.forEach { card ->
-                val aTag = card.selectFirst("a[href*='/movie/'], a[href*='/series/'], a[href*='/anime/'], a[href*='/download18plus/']") ?: return@forEach
-                val href = aTag.attr("abs:href").ifEmpty { base + aTag.attr("href") }
-                val title = card.selectFirst(".title, .movie-title, h3, h2")?.text()?.trim()
-                    ?: aTag.attr("title").trim().takeIf { it.isNotEmpty() }
-                    ?: return@forEach
-                val img = card.selectFirst("img")
-                val poster = img?.attr("data-src")?.ifEmpty { img.attr("src") } ?: img?.attr("src")
-                val type = if (href.contains("/series/") || href.contains("/anime/")) TvType.TvSeries else TvType.Movie
-                results.add(newMovieSearchResponse(title, href, type) { this.posterUrl = poster })
+    private fun parseMovieCards(doc: Element): List<SearchResponse> {
+        return doc.select("div.movie-card").mapNotNull { card ->
+            val a = card.selectFirst("a[href]") ?: return@mapNotNull null
+            val href = a.attr("abs:href").ifEmpty { return@mapNotNull null }
+            val img = card.selectFirst("img")
+            val title = img?.attr("title")?.trim()?.ifEmpty { null }
+                ?: img?.attr("alt")?.trim()?.ifEmpty { null }
+                ?: a.text().trim().ifEmpty { null }
+                ?: return@mapNotNull null
+            newMovieSearchResponse(title, href, typeFromUrl(href)) {
+                posterUrl = img?.attr("data-src")?.ifEmpty { null }
             }
-            return results
-        }
+        }.distinctBy { it.url }
+    }
 
-        val movieLinkPattern = "a[href*='/movie/'], a[href*='/series/'], a[href*='/anime/'], a[href*='/download18plus/']"
-        val seen = mutableSetOf<String>()
-        doc.select(movieLinkPattern).forEach { a ->
-            val href = a.attr("abs:href").ifEmpty { base + a.attr("href") }
-            if (!seen.add(href)) return@forEach
-            val img = a.selectFirst("img") ?: return@forEach
-            val poster = img.attr("data-src").ifEmpty { img.attr("src") }
-            val titleEl = a.parent()?.selectFirst(".title, .movie-title, h3, h2, [class*='name']")
-            val title = titleEl?.text()?.trim()?.takeIf { it.isNotEmpty() }
-                ?: a.attr("title").trim().takeIf { it.isNotEmpty() }
-                ?: a.text().trim().takeIf { it.isNotEmpty() }
-                ?: return@forEach
-            val type = if (href.contains("/series/") || href.contains("/anime/")) TvType.TvSeries else TvType.Movie
-            results.add(newMovieSearchResponse(title, href, type) {
-                this.posterUrl = poster.takeIf { it.isNotEmpty() }
-            })
-        }
-
-        if (results.isEmpty()) {
-            doc.select(movieLinkPattern).forEach { a ->
-                val href = a.attr("abs:href").ifEmpty { base + a.attr("href") }
-                if (!seen.add(href)) return@forEach
-                val title = a.text().trim().takeIf { it.isNotEmpty() } ?: return@forEach
-                if (title.length < 4 || title.all { it.isUpperCase() || it == ' ' }) return@forEach
-                val type = if (href.contains("/series/") || href.contains("/anime/")) TvType.TvSeries else TvType.Movie
-                results.add(newMovieSearchResponse(title, href, type))
-            }
-        }
-        return results
+    private fun typeFromUrl(url: String): TvType = when {
+        url.contains("/series/") || url.contains("/anime/") -> TvType.TvSeries
+        url.contains("/drama/") -> TvType.AsianDrama
+        else -> TvType.Movie
     }
 
     // ── Detail page ─────────────────────────────────────────────────────────
     override suspend fun load(url: String): LoadResponse {
         val base = getBase()
-        val doc = httpGetDoc(url, headers)
-        val rawTitle = doc.selectFirst(".movie-info-view h2, h1, .movie-title, .film-title, [class*='title']")?.text()?.trim()
-            ?: doc.title().substringBefore("•").trim()
-        val year = Regex("\\((\\d{4})\\)").find(rawTitle)?.groupValues?.get(1)?.toIntOrNull()
-        val posterElement = doc.selectFirst("img.poster, img[class*='poster'], .poster img, .thumb img, img[src*='poster'], img[src*='uploads']")
-        val poster = posterElement?.let {
-            it.attr("data-src").ifEmpty { it.attr("src") }.takeIf { s -> s.isNotEmpty() }
+        val doc = httpGetDoc(fixUrlDomain(url, base))
+        val player = doc.selectFirst("script#mlbdInlinePlayerData")?.let {
+            runCatching { JSONObject(decodeManifest(it)) }.getOrNull()
         }
 
-        fun metaVal(label: String): String? {
-            return doc.select("li, p, span, div").firstOrNull { el ->
-                el.text().contains(label, ignoreCase = true)
-            }?.text()?.substringAfter(":")?.trim()
+        val title = doc.selectFirst(".movie-info-view h1")?.text()?.trim()?.ifEmpty { null }
+            ?: player?.optStr("title")
+            ?: doc.title().substringBefore(" Download").trim()
+        val poster = doc.selectFirst(".image-container-view img")?.attr("src")?.ifEmpty { null }
+            ?: player?.optStr("poster")
+            ?: doc.selectFirst("meta[property=og:image]")?.attr("content")
+        val plot = doc.selectFirst(".story-text")?.text()?.trim()?.ifEmpty { null }
+
+        val meta = doc.select("li.flex-item").associate { li ->
+            li.ownText().trim() to (li.selectFirst("b")?.text()?.trim() ?: "")
+        }
+        val info = doc.select(".movie-extra-info p.info-line").associate { p ->
+            (p.selectFirst("b")?.text()?.trim()?.removeSuffix(":") ?: "") to p
+        }
+        fun infoText(key: String): String? {
+            val p = info[key] ?: return null
+            return p.text().substringAfter(p.selectFirst("b")?.text() ?: "").trim().ifEmpty { null }
         }
 
-        val plot = doc.selectFirst(".storyline p, .storyline, [class*='story'] p, [class*='plot']")?.text()?.trim()
-            ?: metaVal("Storyline")
-        val genre = metaVal("Genre")
-        val cast = metaVal("Cast")
-        val language = metaVal("Language")
-        val rating = doc.selectFirst("[class*='imdb'], [class*='rating']")?.text()
-            ?.let { Regex("[0-9.]+").find(it)?.value?.toFloatOrNull() }
+        val genres = infoText("Genre")?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
+            ?: emptyList()
+        val tags = (genres + listOfNotNull(meta["Language"], meta["Quality"]))
+            .filter { it.isNotEmpty() }
+            .distinct()
+        val rating = infoText("IMDb")?.substringBefore("/")?.trim()?.toDoubleOrNull()
+        val released = infoText("Released")
+        val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
+            ?: released?.let { Regex("\\b(19|20)\\d{2}\\b").find(it)?.value?.toIntOrNull() }
 
-        val fullPlot = buildString {
-            language?.let { append("Language: $it\n") }
-            genre?.let { append("Genre: $it\n") }
-            cast?.let { append("Cast: $it\n") }
-            plot?.let { append("\n$it") }
-        }.trim()
-
-        val isSeries = url.contains("/series/") || url.contains("/anime/")
-
-        val jsonSources = mutableListOf<StreamSource>()
-        try {
-            val script = doc.selectFirst("script#mlbdInlinePlayerData")
-            if (script != null && script.data().isNotEmpty()) {
-                val jsonObj = JSONObject(script.data())
-                val episodes = jsonObj.optJSONArray("episodes")
-                if (episodes != null) {
-                    for (i in 0 until episodes.length()) {
-                        try {
-                            val ep = episodes.getJSONObject(i)
-                            val epKey = ep.optString("id", "movie")
-                            val epLabel = ep.optString("label", "Movie")
-                            val sources = ep.optJSONArray("sources") ?: continue
-                            for (j in 0 until sources.length()) {
-                                val src = sources.getJSONObject(j)
-                                val watchUrl = src.optString("url", "")
-                                if (watchUrl.isNotEmpty()) {
-                                    jsonSources.add(
-                                        StreamSource(
-                                            src.optInt("quality", 0),
-                                            watchUrl,
-                                            src.optString("name", ""),
-                                            src.optString("audio", ""),
-                                            epKey,
-                                            epLabel
-                                        )
-                                    )
-                                }
-                            }
-                        } catch (_: Exception) {}
-                    }
-                }
-            }
-        } catch (_: Exception) {}
-
-        val fileAnchors = doc.select("a[href*='/file/']").filterNot { isComingSoon(it) }
-        val linkAnchors = doc.select("a[href*='/getLink/']").filterNot { isComingSoon(it) }
-        val watchAnchors = doc.select("a[href*='/getWatch/']").filterNot { isComingSoon(it) }
-        val liveServerAnchors = doc.select("a.mlbd-live-server-btn[href]")
-
-        fun anchorLink(a: Element): String {
-            val href = a.attr("abs:href").ifEmpty {
-                val h = a.attr("href"); if (h.startsWith("http")) h else "$base$h"
-            }
-            return "${extractQualityLabel(a.text())}|${fixUrlDomain(href, base)}|$url"
-        }
-
-        fun liveServerLink(a: Element): String? {
-            val h = a.attr("href").trim()
-            if (h.isEmpty()) return null
-            val absH = if (h.startsWith("http")) h else "$base$h"
-            var label = a.text().trim()
-            if (label.isEmpty()) label = "Stream"
-            var ql = extractQualityLabel(label)
-            if (ql.isEmpty()) ql = label.take(30)
-            return "$ql|ext:$absH|$url"
-        }
-
-        if (!isSeries) {
-            val items = mutableListOf<String>()
-            for (src in jsonSources) {
-                items.add("${sourceLabel(src)}|watch:${src.url}|$url")
-            }
-            for (a in fileAnchors) items.add(anchorLink(a))
-            for (a in linkAnchors + watchAnchors) items.add(anchorLink(a))
-            for (a in liveServerAnchors) liveServerLink(a)?.let { items.add(it) }
-            val linksData = items.joinToString(" ; ")
-
-            return newMovieLoadResponse(rawTitle, url, TvType.Movie, linksData) {
-                this.posterUrl = poster
-                this.year = year
-                this.plot = fullPlot.takeIf { it.isNotEmpty() }
-                rating?.let { this.score = com.lagradost.cloudstream3.Score.from10(it) }
-            }
-        }
-
-        val episodesData = mutableListOf<Episode>()
-
-        if (jsonSources.isNotEmpty()) {
-            val grouped = jsonSources.groupBy { it.episodeKey }
-            for ((epKey, srcs) in grouped) {
-                val epNum = Regex("\\d+").find(epKey)?.value?.toIntOrNull() ?: 1
-                val epLabel = srcs.firstOrNull()?.episodeLabel?.takeIf { it.isNotBlank() }
-                    ?: "Episode $epNum"
-                val epData = srcs.map { "${sourceLabel(it)}|watch:${it.url}|$url" }
-                    .joinToString(" ; ")
-                episodesData.add(newEpisode(epData) {
-                    this.name = epLabel
-                    this.season = 1
-                    this.episode = epNum
-                })
-            }
-        }
-
-        if (episodesData.isEmpty()) {
-            val epCards = doc.select("div.ep-card, [data-ep]")
-            epCards.forEach { card ->
-                val epText = card.attr("data-ep").ifEmpty {
-                    card.selectFirst("h1, h2, h3, h4, h5, h6")?.text() ?: ""
-                }
-                val epNum = Regex("\\d+").find(epText)?.value?.toIntOrNull() ?: 1
-                val cardLinks = card.select("a[href*='/getLink/'], a[href*='/getWatch/']")
-                    .filterNot { isComingSoon(it) }
-                if (cardLinks.isNotEmpty()) {
-                    val epUrl = cardLinks.map { anchorLink(it) }.joinToString(" ; ")
-                    mergeEpisode(episodesData, epNum, epUrl)
-                }
-            }
-        }
-
-        if (episodesData.isEmpty()) {
-            val episodeSections = doc.select(
-                "div.episode-section, div.season-section, h3:contains(Episode), h4:contains(Episode), " +
-                    "h5:contains(Episode), div[class*='episode'], div[class*='season'], " +
-                    "strong:contains(Ep), b:contains(Ep)"
+        val actors = doc.select(".mlbd-cast__p").mapNotNull { a ->
+            val actorName = a.selectFirst("b")?.text()?.trim()?.ifEmpty { null }
+                ?: return@mapNotNull null
+            ActorData(
+                Actor(actorName, a.selectFirst("img")?.attr("abs:src")?.ifEmpty { null }),
+                roleString = a.selectFirst("small")?.text()?.trim()?.ifEmpty { null }
             )
-            val epRangeRegex = Regex("(?:Ep|Episode)[^\\d]*(\\d+)(?:[^\\d]+(\\d+))?", RegexOption.IGNORE_CASE)
-            for (section in episodeSections) {
-                val epRange = epRangeRegex.find(section.text())
-                val start = epRange?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 1
-                val end = epRange?.groupValues?.getOrNull(2)?.toIntOrNull() ?: start
+        }.ifEmpty {
+            info["Cast"]?.select("a")
+                ?.map { ActorData(Actor(it.text().trim())) }
+                ?.filter { it.actor.name.isNotEmpty() }
+                ?: emptyList()
+        }
 
-                val sectionLinks = mutableListOf<String>()
-                var sib = section.nextElementSibling()
-                while (sib != null && !Regex("h[1-6]").matches(sib.tagName())) {
-                    val anchors = mutableListOf<Element>()
-                    if (sib.tagName() == "a") {
-                        val h = sib.attr("href")
-                        if ((h.contains("/getLink/") || h.contains("/getWatch/")) && !isComingSoon(sib)) {
-                            anchors.add(sib)
-                        }
-                    }
-                    anchors.addAll(
-                        sib.select("a[href*='/getLink/'], a[href*='/getWatch/']").filterNot { isComingSoon(it) }
-                    )
-                    sectionLinks.addAll(anchors.map { anchorLink(it) })
-                    sib = sib.nextElementSibling()
-                }
+        val trailer = doc.selectFirst("[data-mlbd-trailer]")?.attr("data-mlbd-trailer")
+            ?.ifEmpty { null }
+            ?.let { "https://www.youtube.com/watch?v=$it" }
+        val recommendations = doc.select(".mlbd-page-head")
+            .firstOrNull { it.text().contains("Also Download", true) }
+            ?.nextElementSibling()
+            ?.let { parseMovieCards(it) }
+            ?: emptyList()
+        val seriesStatus = if (player?.has("completed") == true) {
+            if (player.optBoolean("completed")) ShowStatus.Completed else ShowStatus.Ongoing
+        } else null
 
-                if (sectionLinks.isNotEmpty()) {
-                    val epUrl = sectionLinks.joinToString(" ; ")
-                    for (epNum in start..end) {
-                        mergeEpisode(episodesData, epNum, epUrl)
-                    }
-                }
+        val playerEpisodes = parseInlineManifest(player).ifEmpty { parseWatchFrame(doc, base) }
+        val allLinks = playerEpisodes.flatMap { it.links }
+        val episodes = playerEpisodes.map { ep ->
+            newEpisode(ep.links.joinToString("\n")) {
+                name = ep.name
+                season = ep.season
+                episode = ep.number
             }
         }
 
-        if (episodesData.isEmpty() && linkAnchors.isNotEmpty()) {
-            val allDownload = (linkAnchors + watchAnchors).map { anchorLink(it) }
-            val allLive = liveServerAnchors.mapNotNull { liveServerLink(it) }
-            val allLinks = (allDownload + allLive).joinToString(" ; ")
-            episodesData.add(newEpisode(allLinks) {
-                this.name = "Full Season"; this.season = 1; this.episode = 1
-            })
+        val type = typeFromUrl(url)
+        if (type == TvType.Movie) {
+            return newMovieLoadResponse(title, url, TvType.Movie, allLinks.joinToString("\n")) {
+                posterUrl = poster
+                this.year = year
+                this.plot = plot
+                this.tags = tags
+                this.actors = actors
+                this.recommendations = recommendations
+                rating?.let { score = Score.from10(it) }
+                addTrailer(trailer)
+            }
         }
-
-        if (episodesData.size > 1) {
-            episodesData.sortWith(compareBy { it.episode })
-        }
-
-        return newTvSeriesLoadResponse(rawTitle, url, TvType.TvSeries, episodesData) {
-            this.posterUrl = poster
+        return newTvSeriesLoadResponse(
+            title, url, type,
+            episodes.sortedWith(compareBy({ it.season }, { it.episode }))
+        ) {
+            posterUrl = poster
             this.year = year
-            this.plot = fullPlot.takeIf { it.isNotEmpty() }
-            rating?.let { this.score = com.lagradost.cloudstream3.Score.from10(it) }
+            this.plot = plot
+            this.tags = tags
+            this.actors = actors
+            this.recommendations = recommendations
+            showStatus = seriesStatus
+            rating?.let { score = Score.from10(it) }
+            addTrailer(trailer)
         }
     }
 
-    // ── Load links (dispatch to resolvers) ──────────────────────────────────
+    /** Links are encoded as `quality|label|url`, one per line. */
+    private fun parseInlineManifest(player: JSONObject?): List<PlayerEpisode> {
+        val epArr = player?.optJSONArray("episodes") ?: return emptyList()
+        return (0 until epArr.length()).mapNotNull { i ->
+            val ep = epArr.getJSONObject(i)
+            val sources = ep.optJSONArray("sources")
+            val links = (0 until (sources?.length() ?: 0)).mapNotNull { j ->
+                val src = sources!!.getJSONObject(j)
+                val streamUrl = src.optStr("url")?.takeIf { it.startsWith("http") }
+                    ?: return@mapNotNull null
+                val q = src.optInt("quality", 0)
+                val label = listOfNotNull(src.optStr("quality_label") ?: qualityName(q), src.optStr("audio"))
+                    .joinToString(" • ")
+                "$q|$label|$streamUrl"
+            }
+            if (links.isEmpty()) return@mapNotNull null
+            PlayerEpisode(ep.optStr("label"), ep.optIntOrNull("season") ?: 1, ep.optIntOrNull("number") ?: (i + 1), links)
+        }
+    }
+
+    /** Fallback when the page has no inline manifest: read `window.__PD2` from the HD player iframe. */
+    private suspend fun parseWatchFrame(doc: Document, base: String): List<PlayerEpisode> {
+        val src = doc.selectFirst("iframe#mlbdHdFrame, iframe[src*='/p/']")?.attr("src")?.ifEmpty { null }
+            ?: return emptyList()
+        val frameUrl = if (src.startsWith("http")) src else base.trimEnd('/') + "/" + src.trimStart('/')
+        val html = try {
+            app.get(
+                frameUrl,
+                headers = requestHeaders() + mapOf("Referer" to "$base/", "Sec-Fetch-Dest" to "iframe"),
+                timeout = 30L
+            ).text
+        } catch (_: Exception) {
+            return emptyList()
+        }
+        val pd = runCatching {
+            val start = html.indexOf("window.__PD2").takeIf { it >= 0 } ?: return emptyList()
+            JSONObject(JSONTokener(html.substring(html.indexOf('{', start))))
+        }.getOrNull() ?: return emptyList()
+
+        fun linksOf(o: JSONObject): List<String> = listOfNotNull(
+            o.optStr("master")?.takeIf { it.startsWith("http") }?.let { "0|HLS Auto|$it" },
+            o.optStr("mp4")?.takeIf { it.startsWith("http") }?.let { "0|MP4 Original|$it" }
+        )
+
+        val epArr = pd.optJSONArray("episodes")
+        val episodes = (0 until (epArr?.length() ?: 0)).mapNotNull { i ->
+            val ep = epArr!!.getJSONObject(i)
+            val links = linksOf(ep)
+            if (links.isEmpty()) return@mapNotNull null
+            PlayerEpisode(
+                ep.optStr("label"),
+                ep.optIntOrNull("season")?.takeIf { it > 0 } ?: 1,
+                ep.optIntOrNull("number")?.takeIf { it > 0 } ?: (i + 1),
+                links
+            )
+        }
+        if (episodes.isNotEmpty()) return episodes
+        val links = linksOf(pd)
+        return if (links.isEmpty()) emptyList() else listOf(PlayerEpisode(pd.optStr("title"), 1, 1, links))
+    }
+
+    // ── Load links ──────────────────────────────────────────────────────────
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        if (!data.contains("|")) return false
         val base = getBase()
-        coroutineScope {
-            data.split(" ; ").map { item ->
-                async {
-                    try {
-                        val parts = item.split("|")
-                        val qualityLabel = parts.getOrNull(0)?.trim() ?: ""
-                        val linkUrl = parts.getOrNull(1)?.trim()?.takeIf { it.isNotEmpty() }
-                            ?: item.trim()
-                        if (linkUrl.isEmpty()) return@async
-                        val refererUrl = parts.getOrNull(2)?.trim()?.let { fixUrlDomain(it, base) }
-                            ?: base
-                        val fixedLink = fixUrlDomain(linkUrl, base)
-                        when {
-                            fixedLink.contains("/getLink/") -> {
-                                resolveGetLink(fixedLink, qualityLabel, refererUrl, callback)
-                            }
-                            fixedLink.contains("/getWatch/") -> {
-                                resolveGetWatch(fixedLink, qualityLabel, refererUrl, callback)
-                            }
-                            fixedLink.contains("/file/") -> {
-                                resolveDirectFile(fixedLink, qualityLabel, refererUrl, callback)
-                            }
-                            fixedLink.startsWith("watch:") -> {
-                                resolveWatchUrl(
-                                    fixedLink.removePrefix("watch:"),
-                                    qualityLabel,
-                                    refererUrl,
-                                    subtitleCallback,
-                                    callback
-                                )
-                            }
-                            fixedLink.startsWith("ext:") -> {
-                                val extUrl = fixedLink.removePrefix("ext:")
-                                if (extUrl.contains("xcloud") || extUrl.contains("mcloud")) {
-                                    resolveXCloud(extUrl, qualityLabel, callback)
-                                } else {
-                                    try {
-                                        loadExtractor(extUrl, refererUrl, subtitleCallback, callback)
-                                    } catch (_: Exception) {}
-                                }
-                            }
-                            else -> {
-                                loadExtractor(fixedLink, refererUrl, subtitleCallback, callback)
-                            }
-                        }
-                    } catch (_: Exception) {}
+        var found = false
+        for (line in data.lines()) {
+            val parts = line.split("|", limit = 3)
+            if (parts.size < 3) continue
+            val (q, label, rawLink) = parts
+            val link = withMgToken(rawLink, base)
+            val type = if (link.contains(".m3u8") || label.startsWith("HLS")) {
+                ExtractorLinkType.M3U8
+            } else {
+                ExtractorLinkType.VIDEO
+            }
+            callback(
+                newExtractorLink(name, "$name [$label]", link, type) {
+                    referer = "$base/"
+                    quality = q.toIntOrNull()?.takeIf { it > 0 } ?: Qualities.Unknown.value
                 }
-            }.awaitAll()
+            )
+            found = true
         }
-        return true
+        return found
     }
 
-    // ── Resolve /getLink/ to direct stream URL ──────────────────────────────
-    private suspend fun resolveGetLink(
-        getLinkUrl: String,
-        qualityLabel: String,
-        refererUrl: String,
-        callback: (ExtractorLink) -> Unit
-    ) {
-        try {
-            val base = getBase()
-            val reqHeaders = headers + mapOf("Referer" to refererUrl)
-            val doc = httpGetDoc(getLinkUrl, reqHeaders)
-
-            val fileAnchor = doc.selectFirst("a[href*='/file/']")
-            if (fileAnchor != null) {
-                val fileUrl = fileAnchor.attr("abs:href").ifEmpty { fileAnchor.attr("href") }
-                resolveDirectFile(fileUrl, qualityLabel, getLinkUrl, callback)
-            }
-
-            doc.select("a[href]").forEach { a ->
-                val href = a.attr("href").trim()
-                if (href.isEmpty() || href.contains("/file/")) return@forEach
-                if (href.startsWith("http") && !href.contains("movielinkbd") &&
-                    !href.contains("telegram") && !href.contains("google.com/store")
-                ) {
-                    com.lagradost.cloudstream3.utils.loadExtractor(href, getLinkUrl, {}, callback)
-                }
-            }
-
-            val videoSrc = doc.selectFirst("video source, video[src]")?.attr("src")
-                ?: doc.selectFirst("iframe[src]")?.attr("src")
-            if (!videoSrc.isNullOrEmpty()) {
-                val streamUrl = if (videoSrc.startsWith("http")) videoSrc else "$base$videoSrc"
-                val fixedStreamUrl = fixUrlDomain(streamUrl, base)
-                val type = if (fixedStreamUrl.contains("m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                val quality = labelToQuality(qualityLabel)
-                callback(ExtractorLink(
-                    source = name,
-                    name = "$name Link [$qualityLabel]",
-                    url = fixedStreamUrl,
-                    referer = getLinkUrl,
-                    quality = quality,
-                    type = type,
-                    headers = headers + mapOf("Referer" to getLinkUrl)
-                ))
-            }
-        } catch (_: Exception) { }
+    /** fsldownload CDN hosts reject `/p/` streams without a short-lived `mg=` token. */
+    private suspend fun withMgToken(link: String, base: String): String {
+        val m = cdnStreamRegex.find(link)
+        if (m == null || link.contains("mg=")) return link
+        val host = m.groupValues[2]
+        if (!host.contains("fsldownload", true)) return link
+        val token = mgToken(host, base) ?: return link
+        val query = m.groupValues[3].removePrefix("?")
+        val mg = "mg=" + URLEncoder.encode(token, "UTF-8")
+        return m.groupValues[1] + "?" + if (query.isEmpty()) mg else "$mg&$query"
     }
 
-    // ── Resolve /getWatch/ to stream URL ────────────────────────────────────
-    private suspend fun resolveGetWatch(
-        getWatchUrl: String,
-        qualityLabel: String,
-        refererUrl: String,
-        callback: (ExtractorLink) -> Unit
-    ) {
-        try {
-            val base = getBase()
-            val requestHeaders = headers + mapOf("Referer" to refererUrl)
-            val html = httpGetText(getWatchUrl, requestHeaders)
-            val doc = Jsoup.parse(html, getWatchUrl)
+    private suspend fun mgToken(host: String, base: String): String? {
+        val nowSec = System.currentTimeMillis() / 1000
+        mgTokens[host]?.takeIf { it.expiresAtSec > nowSec }?.let { return it.value }
+        return try {
+            val json = JSONObject(
+                app.get(
+                    "https://$host/g",
+                    headers = mapOf(
+                        "User-Agent" to headers.getValue("User-Agent"),
+                        "Origin" to base,
+                        "Referer" to "$base/",
+                        "Accept" to "application/json"
+                    ),
+                    timeout = 15L
+                ).text
+            )
+            val g = json.optStr("g")?.takeIf { json.optBoolean("ok") } ?: return null
+            val expiry = g.substringBefore('.').toLongOrNull()?.let { it - 600 } ?: (nowSec + 1800)
+            mgTokens[host] = MgToken(g, expiry)
+            g
+        } catch (_: Exception) {
+            null
+        }
+    }
 
-            val watchAnchor = doc.selectFirst("a[href*='/watch/']")
-            if (watchAnchor != null) {
-                val watchUrl = watchAnchor.attr("abs:href").ifEmpty { watchAnchor.attr("href") }
-                val fixedWatchUrl = fixUrlDomain(watchUrl, base)
-                val watchHeaders = headers + mapOf("Referer" to getWatchUrl)
-                val watchHtml = httpGetText(fixedWatchUrl, watchHeaders)
-                val unescapedWatchHtml = watchHtml.replace("\\/", "/")
-                val srcRegex = Regex("const\\s+SRC\\s*=\\s*[\"'](https?://[^\"']+)[\"']")
-                val watchRegex = Regex("(https?://[^\\s'\"]+/watch/[^\\s'\"]*)")
-                val m3u8Regex = Regex("(https?://[^\\s'\"]+\\.m3u8[^\\s'\"]*)")
-                val mp4Regex = Regex("(https?://[^\\s'\"]+\\.(?:mp4|mkv)[^\\s'\"]*)")
+    // ── Helpers ─────────────────────────────────────────────────────────────
+    /** The inline manifest is either plain JSON or base64 XOR-ed with an LCG keystream. */
+    private fun decodeManifest(el: Element): String {
+        val raw = el.data().trim()
+        val seed = el.attr("data-s").ifEmpty { return raw }
+        var x = seed.toLong(16) and 0xFFFFFFFFL
+        repeat(el.attr("data-r").toIntOrNull() ?: 0) {
+            x = (1103515245L * x + 12345L) and 0xFFFFFFFFL
+        }
+        val bytes = Base64.decode(raw, Base64.DEFAULT)
+        for (i in bytes.indices) {
+            x = (x * 1103515245L + 12345L) and 0xFFFFFFFFL
+            bytes[i] = (((x ushr 16).toInt() and 0xFF) xor bytes[i].toInt()).toByte()
+        }
+        return String(bytes, Charsets.UTF_8)
+    }
 
-                val streamUrl = srcRegex.find(unescapedWatchHtml)?.groupValues?.get(1)
-                    ?: watchRegex.find(unescapedWatchHtml)?.value
-                    ?: m3u8Regex.find(unescapedWatchHtml)?.value
-                    ?: mp4Regex.find(unescapedWatchHtml)?.value
+    private fun JSONObject.optStr(key: String): String? =
+        if (isNull(key)) null else optString(key).trim().ifEmpty { null }
 
-                if (!streamUrl.isNullOrEmpty()) {
-                    val resolvedUrl = if (streamUrl.startsWith("http")) streamUrl else "$base$streamUrl"
-                    val fixedStreamUrl = fixUrlDomain(resolvedUrl, base)
-                    val quality = labelToQuality(qualityLabel)
-                    val type = if (fixedStreamUrl.contains("m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                    callback(ExtractorLink(
-                        source = name,
-                        name = "$name Stream [$qualityLabel]",
-                        url = fixedStreamUrl,
-                        referer = fixedWatchUrl,
-                        quality = quality,
-                        type = type,
-                        headers = headers + mapOf("Referer" to fixedWatchUrl)
-                    ))
-                    return
-                }
+    private fun JSONObject.optIntOrNull(key: String): Int? =
+        if (isNull(key)) null else optInt(key, Int.MIN_VALUE).takeIf { it != Int.MIN_VALUE }
 
-                val fileAnchor = doc.selectFirst("a[href*='/file/']")
-                if (fileAnchor != null) {
-                    val fileUrl = fileAnchor.attr("abs:href").ifEmpty { fileAnchor.attr("href") }
-                    resolveDirectFile(fileUrl, qualityLabel, getWatchUrl, callback)
-                    return
-                }
+    private fun qualityName(q: Int): String = when {
+        q >= 2160 -> "4K"
+        q > 0 -> "${q}p"
+        else -> "Stream"
+    }
 
-                val videoSrc = doc.selectFirst("video source, video[src]")?.attr("src")
-                    ?: doc.selectFirst("iframe[src]")?.attr("src")
-                if (!videoSrc.isNullOrEmpty()) {
-                    val resolvedUrl = if (videoSrc.startsWith("http")) videoSrc else "$base$videoSrc"
-                    val fixedResolvedUrl = fixUrlDomain(resolvedUrl, base)
-                    if (fixedResolvedUrl.contains("xcloud")) {
-                        resolveXCloud(fixedResolvedUrl, qualityLabel, callback)
-                    } else {
-                        val quality = labelToQuality(qualityLabel)
-                        val type = if (fixedResolvedUrl.contains("m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                        callback(ExtractorLink(
-                            source = name,
-                            name = "$name Stream [$qualityLabel]",
-                            url = fixedResolvedUrl,
-                            referer = getWatchUrl,
-                            quality = quality,
-                            type = type,
-                            headers = headers + mapOf("Referer" to getWatchUrl)
-                        ))
-                    }
-                    return
+    private fun fixUrlDomain(url: String, base: String): String {
+        return try {
+            val uri = URI(url)
+            if (uri.host == null || !uri.host.contains("movielinkbd")) return url
+            val query = uri.rawQuery?.let { "?$it" } ?: ""
+            base.trimEnd('/') + (uri.rawPath ?: "") + query
+        } catch (_: Exception) {
+            url
+        }
+    }
+
+    private fun requestHeaders(): Map<String, String> {
+        val cookies = listOfNotNull(hpToken?.let { "mlbd_hp=$it" }, webCookies).joinToString("; ")
+        if (cookies.isEmpty()) return headers
+        val ua = webViewUa?.takeIf { webCookies != null }
+        return headers + mapOf("Cookie" to cookies) + (ua?.let { mapOf("User-Agent" to it) } ?: emptyMap())
+    }
+
+    private fun isTurnstileGate(html: String): Boolean =
+        html.length < 20000 && html.contains("cf-turnstile")
+
+    // ── HTTP with hp-cookie and Turnstile handling ──────────────────────────
+    private suspend fun httpGetDoc(url: String): Document {
+        return try {
+            var resp = app.get(url, headers = requestHeaders(), timeout = 30L)
+            if (resp.text.length < 20000) {
+                val token = resp.headers.values("Set-Cookie")
+                    .firstNotNullOfOrNull { hpTokenRegex.find(it)?.groupValues?.get(1) }
+                    ?: hpTokenRegex.find(resp.text)?.groupValues?.get(1)
+                if (token != null) {
+                    hpToken = token
+                    resp = app.get(url, headers = requestHeaders(), timeout = 30L)
                 }
             }
-
-            val videoSrc2 = doc.selectFirst("video source, video[src]")?.attr("src")
-                ?: doc.selectFirst("iframe[src]")?.attr("src")
-            if (!videoSrc2.isNullOrEmpty()) {
-                val resolvedUrl = if (videoSrc2.startsWith("http")) videoSrc2 else "$base$videoSrc2"
-                val fixedResolvedUrl = fixUrlDomain(resolvedUrl, base)
-                if (fixedResolvedUrl.contains("xcloud")) {
-                    resolveXCloud(fixedResolvedUrl, qualityLabel, callback)
+            if (!isTurnstileGate(resp.text)) return Jsoup.parse(resp.text, url)
+            verifyMutex.withLock {
+                val retry = app.get(url, headers = requestHeaders(), timeout = 30L)
+                if (isTurnstileGate(retry.text)) {
+                    Jsoup.parse(fetchViaWebView(url) ?: retry.text, url)
                 } else {
-                    val quality = labelToQuality(qualityLabel)
-                    val type = if (fixedResolvedUrl.contains("m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                    callback(ExtractorLink(
-                        source = name,
-                        name = "$name Stream [$qualityLabel]",
-                        url = fixedResolvedUrl,
-                        referer = getWatchUrl,
-                        quality = quality,
-                        type = type,
-                        headers = headers + mapOf("Referer" to getWatchUrl)
-                    ))
+                    Jsoup.parse(retry.text, url)
                 }
             }
-        } catch (_: Exception) { }
+        } catch (_: Exception) {
+            Jsoup.parse("", url)
+        }
     }
 
-    // ── Resolve a watch: URL (inline player data) to stream URL ─────────────
-    private suspend fun resolveWatchUrl(
-        watchUrl: String,
-        qualityLabel: String,
-        refererUrl: String,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ) {
-        try {
-            val isKnownMediaExt = watchUrl.contains(".m3u8") ||
-                watchUrl.contains(".mp4") || watchUrl.contains(".mkv")
+    /**
+     * Shows the page in a WebView so the user can pass the Turnstile check, then keeps the
+     * WebView cookies and user agent for later plain HTTP requests.
+     */
+    private suspend fun fetchViaWebView(url: String): String? {
+        val ctx = appContext ?: return null
+        return withContext(Dispatchers.Main) {
+            suspendCoroutine { cont ->
+                var resolved = false
+                var dialog: AlertDialog? = null
+                val wv = WebView(ctx)
 
-            // Inline player data provides direct CDN URLs without file
-            // extensions (e.g. cdn.dramalinkbd.tv/p/HASH). Probe content type
-            // and emit them as direct streams instead of parsing as HTML.
-            if (!isKnownMediaExt) {
-                val contentType = probeContentType(watchUrl, refererUrl)
-                val lower = contentType?.lowercase()
-                if (lower != null && (
-                    lower.startsWith("video/") || lower.startsWith("audio/") ||
-                        lower.contains("mpegurl") || lower.contains("octet-stream")
-                    )
-                ) {
-                    val type = if (lower.contains("mpegurl")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                    val quality = labelToQuality(qualityLabel)
-                    callback(ExtractorLink(
-                        source = name,
-                        name = "$name [$qualityLabel]",
-                        url = watchUrl,
-                        referer = refererUrl,
-                        quality = quality,
-                        type = type,
-                        headers = headers + mapOf("Referer" to refererUrl)
-                    ))
-                    return
-                }
-            } else {
-                val type = if (watchUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                val quality = labelToQuality(qualityLabel)
-                callback(ExtractorLink(
-                    source = name,
-                    name = "$name [$qualityLabel]",
-                    url = watchUrl,
-                    referer = refererUrl,
-                    quality = quality,
-                    type = type,
-                    headers = headers + mapOf("Referer" to refererUrl)
-                ))
-                return
-            }
-
-            val html = httpGetText(watchUrl, headers + mapOf("Referer" to refererUrl))
-            val unescaped = html.replace("\\/", "/")
-            val srcRegex = Regex("const\\s+SRC\\s*=\\s*[\"'](https?://[^\"']+)[\"']")
-            val m3u8Regex = Regex("(https?://[^\\s'\"<>]+\\.m3u8[^\\s'\"<>]*)")
-            val mp4Regex = Regex("(https?://[^\\s'\"<>]+\\.(?:mp4|mkv)[^\\s'\"<>]*)")
-
-            val streamUrl = srcRegex.find(unescaped)?.groupValues?.get(1)
-                ?: m3u8Regex.find(unescaped)?.value
-                ?: mp4Regex.find(unescaped)?.value
-
-            if (!streamUrl.isNullOrEmpty()) {
-                val type = if (streamUrl.contains("m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                val quality = labelToQuality(qualityLabel)
-                callback(ExtractorLink(
-                    source = name,
-                    name = "$name [$qualityLabel]",
-                    url = streamUrl,
-                    referer = refererUrl,
-                    quality = quality,
-                    type = type,
-                    headers = headers + mapOf("Referer" to refererUrl)
-                ))
-            } else {
-                loadExtractor(watchUrl, refererUrl, subtitleCallback, callback)
-            }
-        } catch (_: Exception) {}
-    }
-
-    // ── Resolve XCloud player URL ───────────────────────────────────────────
-    private suspend fun resolveXCloud(
-        xcloudUrl: String,
-        qualityLabel: String,
-        callback: (ExtractorLink) -> Unit
-    ) {
-        val TAG = "XCloud"
-        val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-        try {
-            val streamPlayerUrl = xcloudUrl
-            val simpleHeaders = mapOf(
-                "User-Agent" to userAgent,
-                "Accept-Language" to "en-US,en;q=0.9",
-                "Referer" to streamPlayerUrl
-            )
-            val tryUrls = listOf(
-                streamPlayerUrl,
-                streamPlayerUrl.replace("https://", "https://www.")
-            )
-            val quality = labelToQuality(qualityLabel)
-
-            for (tryUrl in tryUrls) {
-                try {
-                    val html = httpGetText(tryUrl, simpleHeaders)
-                    val result = resolveXCloudExtractStreamUrl(TAG, qualityLabel, streamPlayerUrl, html, "DIRECT")
-                    if (!result.isNullOrEmpty()) {
-                        val streamUrl = if (result.startsWith("http")) result else {
-                            try {
-                                val u = URI(streamPlayerUrl)
-                                "${u.scheme}://${u.host}$result"
-                            } catch (_: Exception) { result }
-                        }
-                        val type = if (streamUrl.contains("m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                        callback(ExtractorLink(
-                            source = name,
-                            name = "$name XCloud [$qualityLabel]",
-                            url = streamUrl,
-                            referer = streamPlayerUrl,
-                            quality = quality,
-                            type = type,
-                            headers = simpleHeaders
-                        ))
-                        return
+                fun finish(html: String?) {
+                    if (resolved) return
+                    resolved = true
+                    try {
+                        dialog?.dismiss()
+                    } catch (_: Exception) {
                     }
-                } catch (_: Exception) { }
+                    try {
+                        wv.destroy()
+                    } catch (_: Exception) {
+                    }
+                    cont.resume(html)
+                }
+
+                try {
+                    val cookieManager = CookieManager.getInstance()
+                    cookieManager.setAcceptCookie(true)
+                    cookieManager.setAcceptThirdPartyCookies(wv, true)
+                    wv.settings.javaScriptEnabled = true
+                    wv.settings.domStorageEnabled = true
+                    webViewUa = wv.settings.userAgentString
+                    wv.layoutParams = FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+
+                    val metrics = ctx.resources.displayMetrics
+                    val dp = metrics.density
+                    val container = FrameLayout(ctx).apply {
+                        isFocusable = true
+                        isFocusableInTouchMode = true
+                        addView(wv)
+                    }
+                    if (isLayout(TV)) addTvCursor(ctx, container, wv, dp)
+
+                    val layout = LinearLayout(ctx).apply {
+                        orientation = LinearLayout.VERTICAL
+                        addView(TextView(ctx).apply {
+                            text = "MovieLinkBD: tap \"Verify you are human\" to continue."
+                            setTextColor(Color.WHITE)
+                            setBackgroundColor(Color.parseColor("#0d1117"))
+                            val p = (10 * dp).toInt()
+                            setPadding(p, p, p, p)
+                        })
+                        addView(
+                            container,
+                            LinearLayout.LayoutParams(
+                                (metrics.widthPixels * 0.95f).toInt(),
+                                (metrics.heightPixels * 0.8f).toInt()
+                            )
+                        )
+                    }
+                    dialog = AlertDialog.Builder(ctx)
+                        .setView(layout)
+                        .setCancelable(true)
+                        .setOnDismissListener { finish(null) }
+                        .create()
+                    dialog?.show()
+                    dialog?.window?.setLayout(
+                        (metrics.widthPixels * 0.95f).toInt(),
+                        (metrics.heightPixels * 0.9f).toInt()
+                    )
+
+                    val handler = Handler(Looper.getMainLooper())
+                    val poll = object : Runnable {
+                        override fun run() {
+                            if (resolved) return
+                            wv.evaluateJavascript("document.documentElement.outerHTML") { raw ->
+                                val html = runCatching { JSONTokener(raw).nextValue() as? String }.getOrNull()
+                                if (html != null &&
+                                    (html.contains("mlbdInlinePlayerData") || html.contains("mlbdHdFrame"))
+                                ) {
+                                    cookieManager.getCookie(url)?.ifEmpty { null }?.let { webCookies = it }
+                                    finish(html)
+                                    return@evaluateJavascript
+                                }
+                                handler.postDelayed(this, 1000L)
+                            }
+                        }
+                    }
+                    wv.webViewClient = WebViewClient()
+                    wv.loadUrl(url)
+                    handler.postDelayed(poll, 1000L)
+                    handler.postDelayed({ finish(null) }, 180_000L)
+                } catch (_: Exception) {
+                    finish(null)
+                }
             }
-        } catch (_: Exception) { }
+        }
     }
 
-    private fun resolveXCloudExtractStreamUrl(
-        TAG: String, qualityLabel: String, streamPlayerUrl: String,
-        html: String, source: String
-    ): String? {
-        if (html.length < 100) return null
-        val unescaped = html.replace("\\/", "/")
-        Log.d(TAG, "[$qualityLabel][$source] len=${html.length} hasSRC=${html.contains("SRC")} hasM3u8=${html.contains("m3u8")} hasMp4=${html.contains(".mp4")}")
-
-        val srcRegex = Regex("const\\s+SRC\\s*=\\s*[\"'](https?://[^\"']+)[\"']")
-        val fileRegex = Regex("(?:file|src)\\s*:\\s*[\"'](https?://[^\"']+\\.(?:m3u8|mp4|mkv)[^\"']*)")
-        val m3u8Regex = Regex("(https?://[^\\s'\"<>]+\\.m3u8[^\\s'\"<>]*)")
-        val mp4Regex = Regex("(https?://[^\\s'\"<>]+\\.(?:mp4|mkv)[^\\s'\"<>]*)")
-        val redirectRegex = Regex("file\\s*:\\s*[\"'](/apis/redirect/[^\"']+)")
-
-        val found = srcRegex.find(unescaped)?.groupValues?.get(1)
-            ?: fileRegex.find(unescaped)?.groupValues?.get(1)
-            ?: m3u8Regex.find(unescaped)?.value
-            ?: mp4Regex.find(unescaped)?.value
-
-        if (!found.isNullOrEmpty()) {
-            Log.d(TAG, "[$qualityLabel][$source] found: $found")
-            return found
-        }
-
-        val redirectPath = redirectRegex.find(unescaped)?.groupValues?.get(1)
-        if (!redirectPath.isNullOrEmpty()) {
-            try {
-                val uri = URI(streamPlayerUrl)
-                val full = "${uri.scheme}://${uri.host}$redirectPath"
-                Log.d(TAG, "[$qualityLabel][$source] redirect: $full")
-                return full
-            } catch (_: Exception) { }
-        }
-
-        Log.d(TAG, "[$qualityLabel][$source] no stream found. snippet: ${html.take(300)}")
-        return null
-    }
-
-    // ── Resolve /file/ to direct stream URL ─────────────────────────────────
-    private suspend fun resolveDirectFile(
-        fileUrl: String,
-        qualityLabel: String,
-        refererUrl: String,
-        callback: (ExtractorLink) -> Unit
-    ) {
-        try {
-            val base = getBase()
-            val requestHeaders = headers + mapOf("Referer" to refererUrl)
-            val html = httpGetText(fileUrl, requestHeaders)
-            val unescapedHtml = html.replace("\\/", "/")
-            val srcRegex = Regex("const\\s+SRC\\s*=\\s*[\"'](https?://[^\"']+)[\"']")
-            val watchRegex = Regex("(https?://[^\\s'\"]+/watch/[^\\s'\"]*)")
-            val m3u8Regex = Regex("(https?://[^\\s'\"]+\\.m3u8[^\\s'\"]*)")
-            val mp4Regex = Regex("(https?://[^\\s'\"]+\\.(?:mp4|mkv)[^\\s'\"]*)")
-
-            val streamUrl = srcRegex.find(unescapedHtml)?.groupValues?.get(1)
-                ?: watchRegex.find(unescapedHtml)?.value
-                ?: m3u8Regex.find(unescapedHtml)?.value
-                ?: mp4Regex.find(unescapedHtml)?.value
-
-            if (!streamUrl.isNullOrEmpty()) {
-                val resolvedUrl = if (streamUrl.startsWith("http")) streamUrl else "$base$streamUrl"
-                val fixedStreamUrl = fixUrlDomain(resolvedUrl, base)
-                val quality = labelToQuality(qualityLabel)
-                val type = if (fixedStreamUrl.contains("m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                callback(ExtractorLink(
-                    source = name,
-                    name = "$name Direct [$qualityLabel]",
-                    url = fixedStreamUrl,
-                    referer = fileUrl,
-                    quality = quality,
-                    type = type,
-                    headers = headers + mapOf("Referer" to fileUrl)
-                ))
+    /** D-pad driven pointer so the Turnstile checkbox can be clicked on TV. */
+    private fun addTvCursor(ctx: Context, container: FrameLayout, wv: WebView, dp: Float) {
+        val size = (22 * dp).toInt()
+        val cursor = View(ctx).apply {
+            layoutParams = FrameLayout.LayoutParams(size, size)
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.argb(160, 255, 50, 50))
+                setStroke((2 * dp).toInt(), Color.WHITE)
             }
-        } catch (_: Exception) { }
-    }
-
-    // ── Quality label helpers ───────────────────────────────────────────────
-    private fun extractQualityLabel(text: String): String {
-        return when {
-            text.contains("4K", true) || text.contains("2160", true) -> "4K"
-            text.contains("1080", true) -> "1080p"
-            text.contains("720p HEVC", true) || text.contains("720 HEVC", true) -> "720p HEVC"
-            text.contains("720", true) -> "720p"
-            text.contains("480", true) -> "480p"
-            text.contains("360", true) -> "360p"
-            text.contains("Watch Online", true) -> "Stream"
-            text.contains("Download", true) -> "Download"
-            else -> text.take(30).trim().ifEmpty { "Unknown" }
+            elevation = 999f
         }
-    }
+        container.addView(cursor)
+        var x = 0f
+        var y = 0f
 
-    private fun labelToQuality(label: String): Int {
-        return when {
-            label.contains("4K", true) || label.contains("2160", true) -> Qualities.P2160.value
-            label.contains("1080", true) -> Qualities.P1080.value
-            label.contains("720", true) -> Qualities.P720.value
-            label.contains("480", true) -> Qualities.P480.value
-            label.contains("360", true) -> Qualities.P360.value
-            else -> Qualities.Unknown.value
+        fun place() {
+            cursor.translationX = x - size / 2f
+            cursor.translationY = y - size / 2f
         }
-    }
 
-    private data class StreamSource(
-        val quality: Int,
-        val url: String,
-        val name: String,
-        val audio: String,
-        val episodeKey: String,
-        val episodeLabel: String
-    )
-
-    private fun sourceLabel(src: StreamSource): String {
-        val audio = src.audio.trim().takeIf { it.isNotBlank() }?.let { " $it" } ?: ""
-        return "${qualityFromInt(src.quality)}$audio"
-    }
-
-    private fun isComingSoon(a: Element): Boolean {
-        val t = a.text().trim().lowercase()
-        return t.contains("coming soon") || t == "soon" || t.contains("not available")
-    }
-
-    private fun qualityFromInt(q: Int): String {
-        return when {
-            q >= 2160 -> "4K"
-            q >= 1080 -> "1080p"
-            q >= 720 -> "720p"
-            q >= 480 -> "480p"
-            q >= 360 -> "360p"
-            else -> "Stream"
-        }
-    }
-
-    private fun mergeEpisode(episodesData: MutableList<Episode>, epNum: Int, epUrl: String) {
-        val existing = episodesData.firstOrNull { it.episode == epNum && it.season == 1 }
-        if (existing != null) {
-            existing.data = if (existing.data.isNullOrEmpty()) epUrl else "${existing.data} ; $epUrl"
-        } else {
-            episodesData.add(newEpisode(epUrl) {
-                this.name = "Episode $epNum"
-                this.season = 1
-                this.episode = epNum
-            })
+        container.viewTreeObserver.addOnGlobalLayoutListener(object : ViewTreeObserver.OnGlobalLayoutListener {
+            override fun onGlobalLayout() {
+                container.viewTreeObserver.removeOnGlobalLayoutListener(this)
+                x = container.width / 2f
+                y = container.height / 2f
+                place()
+                container.requestFocus()
+            }
+        })
+        container.setOnKeyListener { _, keyCode, event ->
+            if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+            val step = 12f * dp
+            when (keyCode) {
+                KeyEvent.KEYCODE_DPAD_UP -> y = (y - step).coerceAtLeast(0f)
+                KeyEvent.KEYCODE_DPAD_DOWN -> y = (y + step).coerceAtMost(container.height.toFloat())
+                KeyEvent.KEYCODE_DPAD_LEFT -> x = (x - step).coerceAtLeast(0f)
+                KeyEvent.KEYCODE_DPAD_RIGHT -> x = (x + step).coerceAtMost(container.width.toFloat())
+                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
+                    val t = SystemClock.uptimeMillis()
+                    val down = MotionEvent.obtain(t, t, MotionEvent.ACTION_DOWN, x, y, 0)
+                    val up = MotionEvent.obtain(t, t + 100, MotionEvent.ACTION_UP, x, y, 0)
+                    wv.dispatchTouchEvent(down)
+                    wv.dispatchTouchEvent(up)
+                    down.recycle()
+                    up.recycle()
+                }
+                else -> return@setOnKeyListener false
+            }
+            place()
+            true
         }
     }
 }

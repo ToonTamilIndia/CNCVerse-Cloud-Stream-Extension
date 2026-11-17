@@ -31,13 +31,15 @@ import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
 import android.content.Intent
 import android.net.Uri
 
-class LiveEventsProvider : MainAPI() {
+class LiveEventsProvider(
+    override var name: String = "⚡Cricify Live Events",
+    val customCatLink: String? = null
+) : MainAPI() {
     companion object {
         var context: android.content.Context? = null
     }
 
     override var mainUrl = "https://cfyhljddgbkkufh82.top"
-    override var name = "⚡Cricify Live Events"
     override var lang = "ta"
     override val hasMainPage = true
     override val hasChromecastSupport = true
@@ -83,7 +85,7 @@ class LiveEventsProvider : MainAPI() {
                         !eventInfo.teamA.isNullOrBlank() &&
                         !eventInfo.teamB.isNullOrBlank()
         ) {
-            if (eventInfo.teamA == eventInfo.teamB) {
+            if (isSameTeam(eventInfo.teamA, eventInfo.teamB)) {
                 // Same team means it's a show/event, not a match
                 eventInfo.teamA
             } else {
@@ -161,9 +163,14 @@ class LiveEventsProvider : MainAPI() {
         }
     }
 
+    private fun isSameTeam(a: String?, b: String?): Boolean {
+        if (a.isNullOrBlank() || b.isNullOrBlank()) return false
+        return a.trim().equals(b.trim(), ignoreCase = true)
+    }
+
     /**
-     * Generate a match card poster URL using the CNCVerse API
-     * API: https://live-card-cncverse.vercel.app/api/match-card
+     * Generate a match card poster URL using the CNCVerse card API
+     * Single-team events (teamA == teamB) render as a show card without teamB
      */
     private fun generateMatchCardUrl(event: LiveEventData): String {
         val eventInfo = event.eventInfo
@@ -171,8 +178,11 @@ class LiveEventsProvider : MainAPI() {
         val title = java.net.URLEncoder.encode(eventInfo?.eventName ?: event.title, "UTF-8")
         val teamA = java.net.URLEncoder.encode(eventInfo?.teamA ?: "Team A", "UTF-8")
         val teamB = java.net.URLEncoder.encode(eventInfo?.teamB ?: "Team B", "UTF-8")
-        val teamAImg = eventInfo?.teamAFlag ?: ""
-        val teamBImg = eventInfo?.teamBFlag ?: ""
+        val sameTeams = isSameTeam(eventInfo?.teamA, eventInfo?.teamB)
+        val teamAImg = eventInfo?.teamAFlag?.takeIf { it.isNotBlank() }
+            ?: (if (sameTeams) eventInfo?.teamBFlag else null)
+            ?: ""
+        val teamBImg = if (sameTeams) "" else eventInfo?.teamBFlag ?: ""
         val eventLogo = eventInfo?.eventLogo ?: ""
         val isLive = isEventLive(event)
         val isEnded = isEventEnded(event)
@@ -181,7 +191,7 @@ class LiveEventsProvider : MainAPI() {
         val time = try {
             eventInfo?.startTime?.let {
             val dateFormat = SimpleDateFormat("yyyy/MM/dd HH:mm:ss Z", Locale.US)
-            val displayFormat = SimpleDateFormat("MMM dd, yyyy hh:mm a", Locale.US)
+            val displayFormat = SimpleDateFormat("MMM dd, yyyy hh:mm a z", Locale.US)
             val date = dateFormat.parse(it)
             date?.let { d -> java.net.URLEncoder.encode(displayFormat.format(d), "UTF-8") } ?: ""
             } ?: ""
@@ -190,10 +200,10 @@ class LiveEventsProvider : MainAPI() {
         }
         
         return buildString {
-            append("https://live-card-png.cricify.workers.dev/?")
+            append("https://card.cncverse.dpdns.org/?")
             append("title=$title")
             append("&teamA=$teamA")
-            append("&teamB=$teamB")
+            if (!sameTeams) append("&teamB=$teamB")
             if (teamAImg.isNotBlank()) append("&teamAImg=$teamAImg")
             if (teamBImg.isNotBlank()) append("&teamBImg=$teamBImg")
             if (eventLogo.isNotBlank()) append("&eventLogo=$eventLogo")
@@ -205,10 +215,12 @@ class LiveEventsProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
 
-
+        ProviderManager.refreshFromFirebase()
 
         // Fetch live events using ProviderManager (same as providers)
-        val events = ProviderManager.fetchLiveEvents()
+        val events =
+                if (customCatLink == null) ProviderManager.fetchLiveEvents()
+                else ProviderManager.fetchCustomEvents(customCatLink)
 
         // Group events by eventCat
         val groupedEvents = events.groupBy { it.eventInfo?.eventCat ?: it.cat ?: "Other" }
@@ -230,7 +242,28 @@ class LiveEventsProvider : MainAPI() {
 
                             val searchResponses =
                                     categoryEvents
-                                    .sortedByDescending{ isEventLive(it) }
+                                    .sortedWith(
+                                        compareBy<LiveEventData> { event ->
+                                            val status = getEventStatus(event)
+                                            when {
+                                                status.contains("🔴") -> 0
+                                                status.contains("🔜") -> 1
+                                                status.contains("✅") -> 2
+                                                else -> 3
+                                            }
+                                        }.thenBy { event: LiveEventData ->
+                                            try {
+                                                val info = event.eventInfo
+                                                if (info == null || info.startTime == null) Long.MAX_VALUE
+                                                else {
+                                                    val fmt = SimpleDateFormat("yyyy/MM/dd HH:mm:ss Z", Locale.US)
+                                                    fmt.parse(info.startTime)?.time ?: Long.MAX_VALUE
+                                                }
+                                            } catch (e: Exception) {
+                                                Long.MAX_VALUE
+                                            }
+                                        }
+                                    )
                                     .map { event ->
                                         val displayTitle = createDisplayTitle(event)
                                         val status = getEventStatus(event)
@@ -239,7 +272,9 @@ class LiveEventsProvider : MainAPI() {
                                                 else displayTitle
 
                                         // Use match card API for poster
-                                        val posterUrl = generateMatchCardUrl(event)
+                                        val posterUrl =
+                                                if (event.cat == "Custom" && !event.image.isNullOrBlank()) event.image
+                                                else generateMatchCardUrl(event)
 
                                         val loadData =
                                                 LiveEventLoadData(
@@ -278,8 +313,10 @@ class LiveEventsProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        
-        val events = ProviderManager.fetchLiveEvents()
+
+        val events =
+                if (customCatLink == null) ProviderManager.fetchLiveEvents()
+                else ProviderManager.fetchCustomEvents(customCatLink)
 
         return events
                 .filter { event ->
@@ -334,7 +371,7 @@ class LiveEventsProvider : MainAPI() {
                 info.startTime?.let {
                     try {
                         val dateFormat = SimpleDateFormat("yyyy/MM/dd HH:mm:ss Z", Locale.US)
-                        val displayFormat = SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.US)
+                        val displayFormat = SimpleDateFormat("MMM dd, yyyy HH:mm z", Locale.US)
                         val date = dateFormat.parse(it)
                         date?.let { d -> append("🕐 ${displayFormat.format(d)}\n") }
                     } catch (e: Exception) {
@@ -440,12 +477,11 @@ class LiveEventsProvider : MainAPI() {
                     }
                     else -> {
                         // M3U8 or other types
-                        val linkType =
-                                if (resolvedUrl.contains(".mpd")) {
-                                    ExtractorLinkType.DASH
-                                } else {
-                                    ExtractorLinkType.M3U8
-                                }
+                        val linkType = when {
+                            resolvedUrl.contains(".mpd") -> ExtractorLinkType.DASH
+                            resolvedUrl.contains(".m3u") || resolvedUrl.contains(".m3u8") -> ExtractorLinkType.M3U8
+                            else -> INFER_TYPE
+                        }
 
                         val finalHeaders = headers.toMutableMap()
                         if (linkType == ExtractorLinkType.M3U8 && !finalHeaders.containsKey("User-Agent")) {

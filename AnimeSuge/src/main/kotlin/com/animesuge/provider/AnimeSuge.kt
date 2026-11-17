@@ -1,11 +1,13 @@
 ﻿package com.animesuge.provider
 
 import android.util.Base64
+import com.cncverse.BuildConfig
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
+import com.lagradost.nicehttp.NiceResponse
 import org.jsoup.Jsoup
 import java.net.URLEncoder
 
@@ -13,13 +15,14 @@ class AnimeSuge : MainAPI() {
     companion object {
         var context: android.content.Context? = null
 
-        private val DOMAINS = listOf(
+        // Upstream only knows animesuge.cz; the same site is mirrored on these hosts.
+        private val MIRRORS = listOf(
             "https://animesuge.cz",
-            "https://animesuge.re",
             "https://anisuge.tv",
-            "https://anisuge.se",
+            "https://animesuge.re",
             "https://animesugez.tv",
         )
+        private val siteHost = Regex("""^https?://(?:www\.)?(?:animesuge\.(?:cz|re)|anisuge\.(?:tv|se)|animesugez\.tv)(?=/|$)""")
     }
 
     override var mainUrl = "https://animesuge.cz"
@@ -45,36 +48,26 @@ class AnimeSuge : MainAPI() {
         "Referer" to "$mainUrl/",
     )
 
-    private fun hostOf(url: String): String = Regex("""^https?://([^/]+)""").find(url)?.groupValues?.get(1) ?: ""
-
-    private fun swapHost(url: String, host: String): String =
-        url.replaceFirst(Regex("""^https?://[^/]+"""), host)
-
-    private suspend fun getWithFallback(
-        url: String,
-        headers: Map<String, String> = emptyMap(),
-        referer: String? = null
-    ): com.lagradost.nicehttp.NiceResponse {
-        val host = hostOf(url)
-        val hosts = mutableListOf(mainUrl)
-        DOMAINS.filter { it != mainUrl }.forEach { hosts.add(it) }
-
-        if (host.isBlank() || DOMAINS.any { host == hostOf(it) }) {
-            val basePath = if (host.isBlank()) url else url.substringAfter(host)
-            var lastError: Exception? = null
-            for (candidateHost in hosts) {
-                try {
-                    val candidate = "$candidateHost$basePath"
-                    val ref = referer?.let { swapHost(it, candidateHost) }
-                    val resp = app.get(candidate, headers = headers, referer = ref)
-                    if (resp.code < 500) return resp
-                } catch (e: Exception) {
-                    lastError = e
+    // Sends site requests to the first mirror that answers and sticks with it.
+    private suspend fun siteGet(url: String, headers: Map<String, String> = emptyMap()): NiceResponse {
+        if (!siteHost.containsMatchIn(url)) return app.get(url, headers = headers)
+        val path = url.replaceFirst(siteHost, "")
+        var lastError: Exception? = null
+        for (host in listOf(mainUrl) + MIRRORS.filter { it != mainUrl }) {
+            try {
+                val hostHeaders = headers.mapValues { (key, value) ->
+                    if (key == "Referer") value.replaceFirst(siteHost, host) else value
                 }
+                val resp = app.get(host + path, headers = hostHeaders, timeout = 15L)
+                if (resp.code < 500) {
+                    mainUrl = host
+                    return resp
+                }
+            } catch (e: Exception) {
+                lastError = e
             }
-            throw lastError ?: Exception("All domains failed for $url")
         }
-        return app.get(url, headers = headers, referer = referer)
+        throw lastError ?: Exception("No AnimeSuge mirror answered for $url")
     }
 
     private fun rc4(key: ByteArray, input: ByteArray): ByteArray {
@@ -129,7 +122,7 @@ class AnimeSuge : MainAPI() {
 
     private fun generateVrf(input: String): String {
         val encoded = URLEncoder.encode(input, "UTF-8").replace("+", "%20")
-        val key = "ysJhV6U27FVIjjuk".toByteArray(Charsets.UTF_8)
+        val key = BuildConfig.ANIMESUGE_VRF_KEY.toByteArray(Charsets.UTF_8)
         val rc4Bytes = rc4(key, encoded.toByteArray(Charsets.UTF_8))
         val b64 = Base64.encodeToString(rc4Bytes, Base64.URL_SAFE or Base64.NO_WRAP)
         val shifted = shiftCharcode(b64)
@@ -139,7 +132,7 @@ class AnimeSuge : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = request.data + if (page > 1) "?page=$page" else ""
-        val doc = getWithFallback(url).document
+        val doc = siteGet(url).document
         val items = doc.select("div.item").mapNotNull { it.toSearchResult() }
         return newHomePageResponse(request.name, items.distinctBy { it.url }, hasNext = true)
     }
@@ -159,13 +152,13 @@ class AnimeSuge : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         val encoded = URLEncoder.encode(query, "UTF-8")
-        return getWithFallback("$mainUrl/filter?keyword=$encoded").document
+        return siteGet("$mainUrl/filter?keyword=$encoded").document
             .select("div.item").mapNotNull { it.toSearchResult() }.distinctBy { it.url }
     }
 
     override suspend fun load(url: String): LoadResponse? {
         val animeUrl = url.replace(Regex("/ep-\\d+$"), "")
-        val doc = getWithFallback(animeUrl).document
+        val doc = siteGet(animeUrl).document
 
         val dataId = doc.selectFirst(".watch-wrap[data-id]")?.attr("data-id")
             ?: Regex("""mangaId\s*=\s*(\d+)""").find(doc.html())?.groupValues?.get(1)
@@ -187,10 +180,9 @@ class AnimeSuge : MainAPI() {
             .map { it.text().trim() }
 
         val vrf = generateVrf(dataId)
-        val epsText = getWithFallback(
+        val epsText = siteGet(
             "$mainUrl/ajax/episode/list/$dataId?vrf=$vrf",
             headers = ajaxHeaders,
-            referer = "$mainUrl/",
         ).text
         val epsJson = parseJson<AjaxResponse>(epsText)
         val epsHtml = epsJson.result ?: return null
@@ -244,13 +236,12 @@ class AnimeSuge : MainAPI() {
         val dataIds = parts[3]
         val selectedType = parts[4]
 
-        val serverListText = getWithFallback(
+        val serverListText = siteGet(
             "$mainUrl/ajax/server/list?servers=$dataIds",
             headers = mapOf(
                 "X-Requested-With" to "XMLHttpRequest",
                 "Referer" to "$animeUrl/",
             ),
-            referer = "$animeUrl/",
         ).text
         val serverListJson = parseJson<AjaxResponse>(serverListText)
         val serverListHtml = serverListJson.result ?: return false
@@ -280,13 +271,12 @@ class AnimeSuge : MainAPI() {
 
         for ((serverName, linkId) in serversToLoad) {
             try {
-                val serverInfoText = getWithFallback(
+                val serverInfoText = siteGet(
                     "$mainUrl/ajax/server?get=$linkId",
                     headers = mapOf(
                         "X-Requested-With" to "XMLHttpRequest",
                         "Referer" to "$animeUrl/",
                     ),
-                    referer = "$animeUrl/",
                 ).text
                 val serverInfoJson = parseJson<ServerInfoResponse>(serverInfoText)
                 val playerUrl = serverInfoJson.result?.url

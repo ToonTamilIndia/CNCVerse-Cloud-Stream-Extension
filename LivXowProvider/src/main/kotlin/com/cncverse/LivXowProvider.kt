@@ -25,6 +25,9 @@ import javax.crypto.spec.SecretKeySpec
 import javax.crypto.spec.IvParameterSpec
 import org.json.JSONObject
 
+private val M3U_EXTINF_PREFIX_RX = Regex("(#EXTINF:.?[0-9]+)", RegexOption.IGNORE_CASE)
+private val M3U_ATTRIBUTE_RX = Regex("""(\w[-\w]*)\s*=\s*(?:"([^"]*)"|([^\s,]+))""", RegexOption.IGNORE_CASE)
+
 class HeaderReplacementInterceptor(private val customHeaders: Map<String, String>) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val originalRequest = chain.request()
@@ -61,8 +64,6 @@ class LivXowProvider(
     private val customMainUrl: String = "https://fifabd.site/OPLLX7/LIVE2.m3u"
 ) : MainAPI() {
     companion object {
-        
-
         var context: android.content.Context? = null
         const val EXT_M3U = "#EXTM3U"
         const val EXT_INF = "#EXTINF"
@@ -90,11 +91,39 @@ class LivXowProvider(
     }
 
     private suspend fun getWithCustomHeaders(url: String): String {
+        // Playlist URLs may carry headers after a pipe: url|Header1=value1&Header2=value2
+        val dynamicHeaders = headers.toMutableMap()
+        var finalUrl = url
+        var hasCustomHeaders = false
+        if (url.contains("|")) {
+            val parts = url.split("|", limit = 2)
+            finalUrl = parts[0]
+            parts[1].split("&").forEach { pair ->
+                val kv = pair.split("=", limit = 2)
+                if (kv.size == 2) {
+                    val key = kv[0].trim()
+                    val value = kv[1].trim()
+                    dynamicHeaders.keys.firstOrNull { it.equals(key, ignoreCase = true) }
+                        ?.let { dynamicHeaders.remove(it) }
+                    dynamicHeaders[key] = value
+                    hasCustomHeaders = true
+                }
+            }
+        }
+
         val request = Request.Builder()
-            .url(url)
+            .url(finalUrl)
             .build()
 
-        return customHttpClient.newCall(request).execute().use { response ->
+        val client = if (hasCustomHeaders) {
+            OkHttpClient.Builder()
+                .addInterceptor(HeaderReplacementInterceptor(dynamicHeaders))
+                .build()
+        } else {
+            customHttpClient
+        }
+
+        return client.newCall(request).execute().use { response ->
             response.body.string()
         }
     }
@@ -214,10 +243,11 @@ private fun String.hexToBase64UrlOrNull(): String? {
 
         return client.newCall(request).execute().use { response ->
           // Parse the response to extract the DRM key
-          val responseBody = response.body.string()
-          val jsonResponse = parseJson<Map<String, Any>>(responseBody)
+          val response = response.body.string()
+          val jsonResponse = parseJson<Map<String, Any>>(response)
           @Suppress("UNCHECKED_CAST")
           val keys = jsonResponse["keys"] as? List<Map<String, String>> ?: return ""
+          // Prefer the key matching the requested KID, else the first one
           val matchedKey = keys.firstOrNull { it["kid"] == kid } ?: keys.firstOrNull() ?: return ""
           matchedKey["k"] ?: ""
         }
@@ -227,6 +257,8 @@ private fun String.hexToBase64UrlOrNull(): String? {
         page: Int,
         request : MainPageRequest
     ): HomePageResponse {
+        LivXowProviderManager.refreshFromFirebase()
+
         val rawContent = getWithCustomHeaders(mainUrl)
         val decryptedContent = decryptContent(rawContent)
         val data = IptvPlaylistParser().parseM3U(decryptedContent)
@@ -258,7 +290,7 @@ private fun String.hexToBase64UrlOrNull(): String? {
         },false)
     }
 
-    override suspend fun search(query: String): List<SearchResponse> {       
+    override suspend fun search(query: String): List<SearchResponse> {
         
         val rawContent = getWithCustomHeaders(mainUrl)
         val decryptedContent = decryptContent(rawContent)
@@ -304,16 +336,12 @@ private fun String.hexToBase64UrlOrNull(): String? {
         val drmKeys: Map<String, String> = emptyMap(),
         val headers: Map<String, String>,
     )
-    
-
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        
-
         val loadData = parseJson<LoadData>(data)
         if (loadData.url.contains("mpd"))
         {
@@ -700,26 +728,27 @@ class IptvPlaylistParser {
                         if (bufferedKeyId == null) bufferedKeyId = keyidFromAttr
                     }
                     line.startsWith("#EXTHTTP:") -> {
-                        // Parse JSON for cookie and user-agent, buffer them
+                        // Parse JSON for cookie, user-agent, referer and origin (keys are case-insensitive), buffer them
                         val json = line.removePrefix("#EXTHTTP:").trim()
                         try {
-                            val map = parseJson<Map<String, String>>(json)
-                            if (map.containsKey("cookie")) {
-                                bufferedCookie = map["cookie"]
+                            val map = parseJson<Map<String, String>>(json).mapKeys { it.key.lowercase() }
+                            map["cookie"]?.let { bufferedCookie = it }
+                            map["user-agent"]?.let { bufferedUserAgent = it }
+                            (map["referer"] ?: map["referrer"])?.let {
+                                bufferedHeaders = bufferedHeaders + ("Referer" to it)
                             }
-                            if (map.containsKey("user-agent")) {
-                                bufferedUserAgent = map["user-agent"]
-                            }
+                            map["origin"]?.let { bufferedHeaders = bufferedHeaders + ("Origin" to it) }
                         } catch (e: Exception) {
                             // Ignore parsing errors
                         }
                     }
                     line.startsWith(LivXowProvider.EXT_VLC_OPT) -> {
-                        // Buffer user agent and referrer
+                        // Buffer user agent, cookie and referrer
                         val userAgent = line.getTagValue("http-user-agent")
                         val referrer = line.getTagValue("http-referrer") ?: line.getTagValue("http-referer")
 
                         if (userAgent != null) bufferedUserAgent = userAgent
+                        line.getTagValue("http-cookie")?.let { bufferedCookie = it }
                         if (referrer != null) {
                             bufferedHeaders = bufferedHeaders + mapOf("Referer" to referrer)
                         }
@@ -895,8 +924,7 @@ class IptvPlaylistParser {
      * Result: Title
      */
     private fun String.getTitle(): String? {
-        val extInfRegex = Regex("(#EXTINF:.?[0-9]+)", RegexOption.IGNORE_CASE)
-        val afterExtInf = replace(extInfRegex, "").trim()
+        val afterExtInf = replace(M3U_EXTINF_PREFIX_RX, "").trim()
 
         // Find the last comma that's not inside quotes
         var lastCommaIndex = -1
@@ -961,8 +989,7 @@ class IptvPlaylistParser {
    */
 
     private fun String.getUrlParameter(key: String): String? {
-        val urlRegex = Regex("^(.*)\\|", RegexOption.IGNORE_CASE)
-        val paramsString = replace(urlRegex, "").replaceQuotesAndTrim()
+        val paramsString = (if (contains('|')) substringAfterLast('|') else this).replaceQuotesAndTrim()
 
         // Split by & to get individual parameters
         val params = paramsString.split("&")
@@ -1000,8 +1027,7 @@ class IptvPlaylistParser {
      * ```
      */
     private fun String.getAttributes(): Map<String, String> {
-        val extInfRegex = Regex("(#EXTINF:.?[0-9]+)", RegexOption.IGNORE_CASE)
-        val afterExtInf = replace(extInfRegex, "").trim()
+        val afterExtInf = replace(M3U_EXTINF_PREFIX_RX, "").trim()
 
         // Find the last comma that's not inside quotes to separate title from attributes
         var lastCommaIndex = -1
@@ -1023,10 +1049,8 @@ class IptvPlaylistParser {
 
         val attributes = mutableMapOf<String, String>()
 
-        // Use regex to match key="value" or key=value patterns
-        val attributeRegex = Regex("""(\w[-\w]*)\s*=\s*(?:"([^"]*)"|([^\s,]+))""", RegexOption.IGNORE_CASE)
-
-        attributeRegex.findAll(attributesString).forEach { matchResult ->
+        // Match key="value" or key=value patterns
+        M3U_ATTRIBUTE_RX.findAll(attributesString).forEach { matchResult ->
             val key = matchResult.groups[1]?.value ?: ""
             val quotedValue = matchResult.groups[2]?.value
             val unquotedValue = matchResult.groups[3]?.value

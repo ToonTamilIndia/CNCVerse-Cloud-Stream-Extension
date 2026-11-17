@@ -1,5 +1,5 @@
 // use an integer for version numbers
-version = 35
+version = 48
 
 dependencies {
     implementation("androidx.core:core:1.16.0")
@@ -17,6 +17,10 @@ android {
         buildConfigField("String", "PLAYZ_PRIMARY_AES_IV", "\"MTRuTWs4bU41S2w1S0w3bA==\"")
         buildConfigField("String", "PLAYZ_SUB_FROM", "\"aAbBcCdDeEfFgGhHiIjJkKlLmMnNoOpPqQrRsStTuUvVwWxXyYzZ\"")
         buildConfigField("String", "PLAYZ_SUB_TO", "\"fFgGjJkKaApPbBmMoOzZeEnNcCdDrRqQtTvVuUxXhHiIwWyYlLsS\"")
+        buildConfigField("String", "PLAYZ_NATIVE_KEY", "\"cz14RStkN01PVE5w\"")
+        buildConfigField("String", "PLAYZ_NATIVE_IV", "\"WTlEvckd2UR41sdk\"")
+        buildConfigField("String", "PLAYZ_XOR_KEY", "\"7hshXvxE74K7mP2xQ9vL\"")
+        buildConfigField("String", "PLAYZ_CATEGORY_XOR_SUFFIX", "\"K7mP2xQ9vL\"")
     }
 }
 

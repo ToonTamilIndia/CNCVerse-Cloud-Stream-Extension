@@ -7,24 +7,14 @@ import com.horis.cncverse.entities.SearchData
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
-import com.lagradost.cloudstream3.utils.ExtractorLink
-import okhttp3.Headers
-import okhttp3.Interceptor
-import okhttp3.Response
 import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.APIHolder.unixTime
-import android.content.Intent
-import android.net.Uri
-import android.os.Handler
-import android.os.Looper
-import com.lagradost.cloudstream3.ui.settings.Globals.TV
-import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
 
 class HotStarMirrorProvider : MainAPI() {
     companion object {
         var context: Context? = null
     }
-    
+
     override val supportedTypes = setOf(
         TvType.Movie,
         TvType.TvSeries,
@@ -56,7 +46,9 @@ class HotStarMirrorProvider : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        cookie_value = ensureBypass(mainUrl)
+        if (cookie_value.isEmpty()) {
+            cookie_value = bypass(mainUrl)
+        }
         val cookies = mapOf(
             "t_hash_t" to cookie_value,
             "ott" to "hs",
@@ -93,8 +85,9 @@ class HotStarMirrorProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        
-        cookie_value = ensureBypass(mainUrl)
+        if (cookie_value.isEmpty()) {
+            cookie_value = bypass(mainUrl)
+        }
         val cookies = mapOf(
             "t_hash_t" to cookie_value,
             "hd" to "on",
@@ -112,8 +105,9 @@ class HotStarMirrorProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        
-        cookie_value = ensureBypass(mainUrl)
+        if (cookie_value.isEmpty()) {
+            cookie_value = bypass(mainUrl)
+        }
         val id = parseJson<Id>(url).id
         val cookies = mapOf(
             "t_hash_t" to cookie_value,
@@ -231,70 +225,22 @@ class HotStarMirrorProvider : MainAPI() {
     ): Boolean {
         val apiBase = resolveApiUrl()
         val id = parseJson<LoadData>(data).id
+        val userToken = getNewTvUserToken(apiBase, "hs")
+        val response = app.get(
+            "$apiBase/newtv/player.php?id=$id",
+            headers = buildNewTvHeaders("hs", mapOf("Usertoken" to userToken))
+        ).parsed<NewTvPlayerResponse>()
 
-        var userToken = getNewTvUserToken(apiBase, "hs")
-        var response: NewTvPlayerResponse? = try {
-            app.get(
-                "$apiBase/newtv/player.php?id=$id",
-                headers = buildNewTvHeaders("hs", mapOf("Usertoken" to userToken))
-            ).parsedSafe<NewTvPlayerResponse>()
-        } catch (_: Exception) { null }
-
-        if (response?.status == "otp") {
-            userToken = getNewTvUserToken(apiBase, "hs", forceRefresh = true)
-            response = try {
-                app.get(
-                    "$apiBase/newtv/player.php?id=$id",
-                    headers = buildNewTvHeaders("hs", mapOf("Usertoken" to userToken))
-                ).parsedSafe<NewTvPlayerResponse>()
-            } catch (_: Exception) { null }
-        }
-
-        val videoLink = response?.video_link?.takeIf { it.isNotBlank() } ?: return false
-        val referer = response?.referer?.takeIf { it.isNotBlank() } ?: apiBase
+        val videoLink = response.video_link
+        if (videoLink == null || videoLink.isBlank()) return false
 
         callback.invoke(
-            newExtractorLink(name, name, videoLink, type = ExtractorLinkType.M3U8) {
-                this.referer = referer
-                this.headers = mapOf(
-                    "Referer" to referer,
-                    "Cookie" to "hd=on"
-                )
+            newExtractorLink(name, name, videoLink, ExtractorLinkType.M3U8) {
+                this.referer = response.referer ?: apiBase
             }
         )
 
         return true
-    }
-
-    @Suppress("ObjectLiteralToLambda")
-    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        val sessionCookie = buildList {
-            add("hd=on")
-            add("ott=hs")
-            if (cookie_value.isNotEmpty()) add("t_hash_t=$cookie_value")
-        }.joinToString("; ")
-        val videoHeaders = mapOf(
-            "User-Agent" to (headers["User-Agent"] ?: USER_AGENT),
-            "Cookie" to sessionCookie
-        )
-        return object : Interceptor {
-            override fun intercept(chain: Interceptor.Chain): Response {
-                val request = chain.request()
-                val rawUrl = request.url.toString()
-                val targetUrl = if (rawUrl.startsWith("https:///")) {
-                    rawUrl.replace("https:///", "$mainUrl/")
-                } else rawUrl
-
-                val builder = request.newBuilder().url(targetUrl)
-                for ((key, value) in videoHeaders) {
-                    builder.header(key, value)
-                }
-                if (request.header("Referer").isNullOrBlank()) {
-                    builder.header("Referer", extractorLink.referer)
-                }
-                return chain.proceed(builder.build())
-            }
-        }
     }
 
     data class Id(
@@ -304,7 +250,4 @@ class HotStarMirrorProvider : MainAPI() {
     data class LoadData(
         val title: String, val id: String
     )
-
-
-
 }

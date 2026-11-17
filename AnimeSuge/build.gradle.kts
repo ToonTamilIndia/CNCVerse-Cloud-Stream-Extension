@@ -1,6 +1,16 @@
 // use an integer for version numbers
-version = 8
+version = 12
 
+android {
+    defaultConfig {
+        // VRF RC4 key, MegaPlay CDN token-signing secret and the fallback
+        // key/IV seeds for MegaPlay's `enc` payload.
+        buildConfigField("String", "ANIMESUGE_VRF_KEY", "\"ysJhV6U27FVIjjuk\"")
+        buildConfigField("String", "MEGAPLAY_TOKEN_KEY", "\"MpCdnT0k3n!9f2K#xQ7vL5mR8wN1pY4s\"")
+        buildConfigField("String", "MEGAPLAY_FALLBACK_KEY_SEED", "\"i?LMTAx0Q6,:}50U\"")
+        buildConfigField("String", "MEGAPLAY_FALLBACK_IV_SEED", "\"W0;27ToaUpl_P%'c\"")
+    }
+}
 
 cloudstream {
     language = "en"

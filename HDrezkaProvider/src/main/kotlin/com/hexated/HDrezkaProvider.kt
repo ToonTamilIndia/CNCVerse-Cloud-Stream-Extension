@@ -18,12 +18,16 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.getQualityFromName
 import com.lagradost.cloudstream3.utils.newExtractorLink
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
+import okhttp3.Request
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
+import java.security.MessageDigest
 import java.util.*
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import kotlin.math.max
 
 class HDrezkaProvider : MainAPI() {
     companion object {
@@ -49,34 +53,44 @@ class HDrezkaProvider : MainAPI() {
         "$mainUrl/animation/?filter=watching" to "аниме",
     )
 
+    @Volatile
     private var anubisCookie: String? = null
+    private val anubisLock = Any()
+    private val anubisUa = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
 
     private val anubisKiller = Interceptor { chain ->
         val request = chain.request()
         val url = request.url.toString()
 
-        if (anubisCookie.isNullOrEmpty()) {
-            anubisCookie = getAnubisCookie(url)
+        val reqWithCookie = if (!anubisCookie.isNullOrEmpty()) {
+            request.newBuilder()
+                .header("Cookie", anubisCookie!!)
+                .header("User-Agent", anubisUa)
+                .build()
+        } else {
+            request.newBuilder().header("User-Agent", anubisUa).build()
         }
 
-        val requestBuilder = request.newBuilder()
-            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
-
-        if (!anubisCookie.isNullOrEmpty()) {
-            requestBuilder.header("Cookie", anubisCookie!!)
-        }
-
-        val response = chain.proceed(requestBuilder.build())
+        val response = chain.proceed(reqWithCookie)
         val bodyString = response.peekBody(Long.MAX_VALUE).string()
 
         if (bodyString.contains("id=\"anubis_challenge\"") || response.code == 503) {
+            val setCookies = response.headers("Set-Cookie")
             response.close()
-            val newCookie = getAnubisCookie(url)
+            val stale = anubisCookie
+            // Only one request solves the challenge; the others reuse its cookie
+            val newCookie = synchronized(anubisLock) {
+                if (anubisCookie == stale || anubisCookie.isNullOrEmpty()) {
+                    solveAnubis(url, bodyString, setCookies) ?: getAnubisCookie(url)
+                } else {
+                    anubisCookie
+                }
+            }
             if (newCookie != null) {
                 anubisCookie = newCookie
                 val retryReq = request.newBuilder()
-                    .header("Cookie", newCookie)
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
+                    .header("Cookie", anubisCookie!!)
+                    .header("User-Agent", anubisUa)
                     .build()
                 return@Interceptor chain.proceed(retryReq)
             }
@@ -94,6 +108,13 @@ class HDrezkaProvider : MainAPI() {
         Handler(Looper.getMainLooper()).post {
             try {
                 val ctx = context ?: throw Exception("Context is null")
+                // Drop stale anubis cookies so the WebView is issued a fresh challenge
+                val cm = CookieManager.getInstance()
+                cm.getCookie(url)?.split(";")
+                    ?.map { it.trim().substringBefore("=") }
+                    ?.filter { it.contains("anubis") }
+                    ?.forEach { cm.setCookie(url, "$it=; Max-Age=0; Path=/") }
+
                 val webView = WebView(ctx)
                 webView.settings.apply {
                     javaScriptEnabled = true
@@ -101,7 +122,7 @@ class HDrezkaProvider : MainAPI() {
                     loadsImagesAutomatically = false
                     blockNetworkImage = true
                     mixedContentMode = 0
-                    userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+                    userAgentString = anubisUa
                 }
                 webView.webViewClient = object : WebViewClient() {
                     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
@@ -119,16 +140,17 @@ class HDrezkaProvider : MainAPI() {
                 val checkRunnable = object : Runnable {
                     override fun run() {
                         if (!polling) return
-                        val cookies = CookieManager.getInstance().getCookie(url)
-                        val hasAuth = cookies?.contains("-anubis-auth=") ?: false
-                        if (!hasAuth) {
+                        val anubisCookies = CookieManager.getInstance().getCookie(url)
+                            ?.split(";")
+                            ?.map { it.trim() }
+                            ?.filter { it.substringBefore("=").contains("anubis") }
+                            ?: emptyList()
+                        if (anubisCookies.none { it.substringBefore("=").contains("anubis-auth") }) {
                             Handler(Looper.getMainLooper()).postDelayed(this, 250)
                             return
                         }
                         polling = false
-                        fetchedCookie = cookies?.split(";")
-                            ?.map { it.trim() }
-                            ?.firstOrNull { it.contains("-anubis-auth=") }
+                        fetchedCookie = anubisCookies.joinToString("; ")
                         try {
                             webView.stopLoading()
                             webView.destroy()
@@ -152,6 +174,100 @@ class HDrezkaProvider : MainAPI() {
 
         latch.await(16, TimeUnit.SECONDS)
         return fetchedCookie
+    }
+
+    data class AnubisPage(
+        @JsonProperty("rules") val rules: AnubisRules? = null,
+        @JsonProperty("challenge") val challenge: AnubisChallenge? = null,
+    )
+
+    data class AnubisRules(
+        @JsonProperty("algorithm") val algorithm: String? = null,
+        @JsonProperty("difficulty") val difficulty: Int? = null,
+    )
+
+    data class AnubisChallenge(
+        @JsonProperty("id") val id: String? = null,
+        @JsonProperty("method") val method: String? = null,
+        @JsonProperty("randomData") val randomData: String? = null,
+        @JsonProperty("difficulty") val difficulty: Int? = null,
+    )
+
+    // The pass-challenge endpoint answers with a redirect that carries the auth cookie
+    private val anubisClient by lazy {
+        app.baseClient.newBuilder()
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .build()
+    }
+
+    private fun scriptJson(html: String, id: String): String? {
+        return Regex("<script id=\"$id\"[^>]*>(.*?)</script>", RegexOption.DOT_MATCHES_ALL)
+            .find(html)?.groupValues?.get(1)?.trim()
+    }
+
+    private fun anubisProofOfWork(data: String, difficulty: Int): Pair<Long, String>? {
+        val md = MessageDigest.getInstance("SHA-256")
+        val fullBytes = difficulty / 2
+        val halfByte = difficulty % 2 != 0
+        for (nonce in 0L until 50_000_000L) {
+            val h = md.digest("$data$nonce".toByteArray(Charsets.UTF_8))
+            var ok = true
+            for (i in 0 until fullBytes) {
+                if (h[i].toInt() != 0) {
+                    ok = false
+                    break
+                }
+            }
+            if (ok && halfByte && (h[fullBytes].toInt() and 0xF0) != 0) ok = false
+            if (ok) return nonce to h.joinToString("") { "%02x".format(it) }
+        }
+        return null
+    }
+
+    // Solves Anubis' fast/slow SHA-256 proof-of-work without a WebView
+    private fun solveAnubis(pageUrl: String, html: String, setCookies: List<String>): String? {
+        return runCatching {
+            val page = tryParseJson<AnubisPage>(scriptJson(html, "anubis_challenge")) ?: return null
+            val ch = page.challenge ?: return null
+            val method = ch.method ?: page.rules?.algorithm
+            if (method != "fast" && method != "slow") return null
+            val difficulty = ch.difficulty ?: page.rules?.difficulty ?: return null
+            if (difficulty < 0 || difficulty >= 9) return null
+            val id = ch.id ?: return null
+            val data = ch.randomData ?: return null
+
+            val started = System.currentTimeMillis()
+            val (nonce, hash) = anubisProofOfWork(data, difficulty) ?: return null
+            val elapsed = max(System.currentTimeMillis() - started, 350L)
+
+            val base = pageUrl.toHttpUrl().let { "${it.scheme}://${it.host}" }
+            val prefix = tryParseJson<String>(scriptJson(html, "anubis_base_prefix")) ?: ""
+            val passUrl = "$base$prefix/.within.website/x/cmd/anubis/api/pass-challenge".toHttpUrl()
+                .newBuilder()
+                .addQueryParameter("id", id)
+                .addQueryParameter("response", hash)
+                .addQueryParameter("nonce", nonce.toString())
+                .addQueryParameter("redir", pageUrl)
+                .addQueryParameter("elapsedTime", elapsed.toString())
+                .build()
+
+            val verification = setCookies.map { it.substringBefore(";").trim() }
+                .filter { it.substringBefore("=").contains("anubis") && it.substringAfter("=").isNotEmpty() }
+            val req = Request.Builder()
+                .url(passUrl)
+                .header("User-Agent", anubisUa)
+                .header("Referer", pageUrl)
+                .apply { if (verification.isNotEmpty()) header("Cookie", verification.joinToString("; ")) }
+                .build()
+
+            anubisClient.newCall(req).execute().use { r ->
+                r.headers("Set-Cookie").map { it.substringBefore(";").trim() }
+                    .filter { it.substringBefore("=").contains("anubis-auth") && it.substringAfter("=").isNotEmpty() }
+                    .takeIf { it.isNotEmpty() }
+                    ?.joinToString("; ")
+            }
+        }.getOrNull()
     }
 
     override suspend fun getMainPage(
@@ -252,8 +368,8 @@ class HDrezkaProvider : MainAPI() {
         data["favs"] = document.selectFirst("input#ctrl_favs")?.attr("value").toString()
         data["ref"] = url
 
+        val translators = document.select("ul#translators-list [data-translator_id]")
         return if (tvType == TvType.TvSeries) {
-            val translators = document.select("ul#translators-list li")
             if (translators.isNotEmpty()) {
                 translators.map { res ->
                     server.add(
@@ -311,7 +427,7 @@ class HDrezkaProvider : MainAPI() {
                 addTrailer(trailer)
             }
         } else {
-            document.select("ul#translators-list li").map { res ->
+            translators.map { res ->
                 server.add(
                     mapOf(
                         "translator_name" to res.text(),

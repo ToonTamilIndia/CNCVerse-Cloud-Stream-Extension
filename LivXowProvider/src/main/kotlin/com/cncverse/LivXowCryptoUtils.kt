@@ -94,4 +94,15 @@ object LivXowCryptoUtils {
         return Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
     }
 
+    /**
+     * Builds a ClearKey license JSON from a "kid:key" hex pair.
+     * Returns an empty string if [api] is not in that format.
+     */
+    fun makeClearKeyJson(api: String): String {
+        val parts = api.split(":")
+        if (parts.size < 2) return ""
+        val kid = hexToBase64Unpadded(parts[0].trim())
+        val key = hexToBase64Unpadded(parts[1].trim())
+        return "{\"keys\":[{\"kty\":\"oct\",\"k\":\"$key\",\"kid\":\"$kid\"}],\"type\":\"temporary\"}"
+    }
 }

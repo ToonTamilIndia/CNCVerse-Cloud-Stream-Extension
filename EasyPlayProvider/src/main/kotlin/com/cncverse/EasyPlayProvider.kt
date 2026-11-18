@@ -10,8 +10,10 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.security.SecureRandom
@@ -317,6 +319,30 @@ class EasyPlayProvider : MainAPI() {
         return null
     }
 
+    // Takes over a lease for the stitcher's own identity and returns that lease's panel .ts URL.
+    private fun panelTsAs(sid: String, identity: Pair<String, String>): String? = runBlocking {
+        val headers = mapOf(
+            "X-Installation-Token" to identity.first,
+            "X-Device-Id" to identity.second,
+            "Content-Type" to "application/json",
+            "User-Agent" to APP_UA,
+        )
+        for (host in API_HOSTS) {
+            try {
+                val body = "{\"takeover\":true}".toRequestBody(JSON_MEDIA)
+                val resp = app.post("$host$ACQUIRE_PATH", headers = headers, requestBody = body, timeout = 15L)
+                if (!resp.isSuccessful) continue
+                val playlistUrl = parseJson<AcquireResponse>(resp.text).playlist_url
+                    ?.takeIf { it.isNotBlank() } ?: continue
+                val lease = parseLease(playlistUrl) ?: continue
+                return@runBlocking "${lease.base}live/${lease.username}/${lease.password}/$sid.ts"
+            } catch (e: Exception) {
+                continue
+            }
+        }
+        null
+    }
+
     data class EasyChannel(
         val streamId: String,
         val name: String,
@@ -507,6 +533,8 @@ class EasyPlayProvider : MainAPI() {
         }
     }
 
+    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor = TsStitcher.interceptor
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -514,17 +542,19 @@ class EasyPlayProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val ch = parseJson<EasyChannel>(data)
+        TsStitcher.userAgent = PLAYER_UA
+        TsStitcher.panelUrl = { sid, identity -> panelTsAs(sid, identity) }
         // Every play takes over a fresh lease; fall back to the cached one if that fails.
-        val lease = acquire(forceFresh = true) ?: acquire() ?: return false
+        val lease = acquire(forceFresh = true) ?: acquire() ?: return true
         val base = "${lease.base}live/${lease.username}/${lease.password}/${ch.streamId}"
         callback(
-            newExtractorLink(this.name, "${ch.name} (HLS)", "$base.m3u8", ExtractorLinkType.M3U8) {
+            newExtractorLink(this.name, "${ch.name} (Live)", "$base.ts", ExtractorLinkType.VIDEO) {
                 this.quality = Qualities.Unknown.value
-                this.headers = mapOf("User-Agent" to PLAYER_UA)
+                this.headers = mapOf("User-Agent" to PLAYER_UA, TsStitcher.STITCH_HEADER to "1")
             }
         )
         callback(
-            newExtractorLink(this.name, "${ch.name} (TS)", "$base.ts", ExtractorLinkType.VIDEO) {
+            newExtractorLink(this.name, "${ch.name} (HLS)", "$base.m3u8", ExtractorLinkType.M3U8) {
                 this.quality = Qualities.Unknown.value
                 this.headers = mapOf("User-Agent" to PLAYER_UA)
             }

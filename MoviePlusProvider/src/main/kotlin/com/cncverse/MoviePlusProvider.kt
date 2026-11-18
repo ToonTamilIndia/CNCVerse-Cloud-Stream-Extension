@@ -10,7 +10,7 @@ import java.util.Locale
 class MoviePlusProvider : MainAPI() {
     override var name = "Movie! Plus"
     override var mainUrl = "https://api.appsxploit.dev"
-    override var lang = "es"
+    override var lang = "mx"
     override val hasMainPage = true
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
 

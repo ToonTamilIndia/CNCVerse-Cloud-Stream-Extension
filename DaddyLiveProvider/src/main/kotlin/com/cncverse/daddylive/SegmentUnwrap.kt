@@ -35,6 +35,9 @@ object SegmentUnwrap {
 
     private val tokens = ConcurrentHashMap<String, Token>()
 
+    // slug -> playlist-token URL the player requested (carries its tk parameter)
+    internal val playlistTokenUrls = ConcurrentHashMap<String, String>()
+
     val interceptor = Interceptor { intercept(it) }
 
     private val pool = Executors.newFixedThreadPool(3)
@@ -102,7 +105,7 @@ object SegmentUnwrap {
 
     private fun prefetchFrom(playlist: String, req: Request) {
         if (!playlist.contains("#EXTINF")) return
-        val headers = listOf("User-Agent", "Origin", "Referer").mapNotNull { h -> req.header(h)?.let { h to it } }
+        val headers = listOf("User-Agent", "Origin", "Referer", "Cookie").mapNotNull { h -> req.header(h)?.let { h to it } }
         playlist.lineSequence()
             .map { it.trim() }
             .filter { it.isNotEmpty() && !it.startsWith("#") }
@@ -150,14 +153,14 @@ object SegmentUnwrap {
     private fun token(chain: Interceptor.Chain, req: Request, slug: String): String? {
         val now = System.currentTimeMillis()
         tokens[slug]?.let { if (now < it.renewAt) return it.value }
-        val url = req.url.newBuilder()
+        val url = playlistTokenUrls[slug]?.toHttpUrlOrNull() ?: req.url.newBuilder()
             .encodedPath("/api/playlist-token")
             .query(null)
             .addQueryParameter("slug", slug)
             .build()
         val fresh = runCatching {
             val builder = Request.Builder().url(url).get()
-            listOf("User-Agent", "Origin", "Referer").forEach { h -> req.header(h)?.let { builder.header(h, it) } }
+            listOf("User-Agent", "Origin", "Referer", "Cookie").forEach { h -> req.header(h)?.let { builder.header(h, it) } }
             chain.proceed(builder.header("Cache-Control", "no-cache").build()).use { res ->
                 if (!res.isSuccessful) return@use null
                 val json = JSONObject(res.body.string())

@@ -212,10 +212,10 @@
     },
     {
         "iconUrl": "https://thedaddy.pk/assets/logos/favicon-32x32.png",
-        "fileHash": "sha256-ca0b099ba44fe1d01f79e9a98036fd3454f8e6e77bcac3984cdc8a6873923a13",
+        "fileHash": "sha256-22412d0cf0fa14344b49c1e082edb7235730ca16e5e72285c82af557695cbd05",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension",
-        "fileSize": 51189,
+        "fileSize": 52342,
         "status": 1,
         "language": "en",
         "authors": [
@@ -224,7 +224,7 @@
         "tvTypes": [
             "Live"
         ],
-        "version": 3,
+        "version": 8,
         "internalName": "DaddyLiveProvider",
         "description": "Live sports schedule and 900+ 24/7 channels from DaddyLive (thedaddy.pk)",
         "url": "https://raw.githubusercontent.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/DaddyLiveProvider.cs3",
@@ -273,10 +273,10 @@
     },
     {
         "iconUrl": "https://raw.githubusercontent.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/master/EasyPlayProvider/icon.png",
-        "fileHash": "sha256-10695ae20e72aa39d2366c6aefa5f87c346ac17f3be70ec7f84e122c2160aeb3",
+        "fileHash": "sha256-d88bf99739e0c90bac5a1fca2108d7ed64ecbac984598ecde2f3ff6654cc3535",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension",
-        "fileSize": 39329,
+        "fileSize": 53433,
         "status": 1,
         "language": "en",
         "authors": [
@@ -285,7 +285,7 @@
         "tvTypes": [
             "Live"
         ],
-        "version": 10,
+        "version": 12,
         "internalName": "EasyPlayProvider",
         "description": "EasyPlay IPTV Live TV channels (auto-leased Xtream playlist, no login)",
         "url": "https://raw.githubusercontent.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/EasyPlayProvider.cs3",
@@ -524,10 +524,10 @@
     },
     {
         "iconUrl": "https://raw.githubusercontent.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/master/MoviePlusProvider/icon.png",
-        "fileHash": "sha256-fd2c855ead5e1c6271ad88d761f9f4b4823255c02fc4a9ab10bc9b694f468218",
+        "fileHash": "sha256-b30c6104b5c3ba61f3900b8bd0ec09b64468f30d128fe40a7f2f387afec9af71",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension",
-        "fileSize": 61642,
+        "fileSize": 65171,
         "status": 1,
         "language": "mx",
         "authors": [
@@ -537,7 +537,7 @@
             "Movie",
             "TvSeries"
         ],
-        "version": 2,
+        "version": 5,
         "internalName": "MoviePlusProvider",
         "description": "Movie! Plus \u2014 Spanish/Latino movies & series (TMDB metadata, Yandex.Disk sources, no login)",
         "url": "https://raw.githubusercontent.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/MoviePlusProvider.cs3",

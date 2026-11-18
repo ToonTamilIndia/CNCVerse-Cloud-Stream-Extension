@@ -1,5 +1,5 @@
 // use an integer for version numbers
-version = 3
+version = 8
 
 cloudstream {
     description = "Live sports schedule and 900+ 24/7 channels from DaddyLive (thedaddy.pk)"

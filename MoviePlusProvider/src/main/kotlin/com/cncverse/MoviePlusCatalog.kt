@@ -5,6 +5,7 @@ import com.lagradost.cloudstream3.app
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.ByteArrayInputStream
+import java.text.Normalizer
 import java.util.Locale
 import java.util.zip.GZIPInputStream
 
@@ -54,7 +55,8 @@ object MoviePlusCatalog {
             if (cacheMovies.isNotEmpty() && System.currentTimeMillis() - cacheTime < CACHE_TTL_MS) {
                 return@withLock cacheMovies to cacheSeries
             }
-            for (mirror in MIRRORS) {
+            val liveUrls = runCatching { MoviePlusWorker.currentCatalogUrls() }.getOrNull() ?: emptyList()
+            for (mirror in liveUrls + MIRRORS) {
                 try {
                     val bytes = app.get(mirror, timeout = 60L).body.bytes()
                     val json = GZIPInputStream(ByteArrayInputStream(bytes)).use { it.readBytes().decodeToString() }
@@ -103,14 +105,14 @@ object MoviePlusCatalog {
         else -> emptyList()
     }
 
-    fun normalize(text: String): String = text.lowercase(Locale.ROOT)
-        .replace("á", "a")
-        .replace("é", "e")
-        .replace("í", "i")
-        .replace("ó", "o")
-        .replace("ú", "u")
-        .replace("ü", "u")
-        .replace("ñ", "n")
+    private val ACCENTS = Regex("\\p{Mn}+")
+    private val PUNCT = Regex("[^\\p{L}\\p{N}]+")
+
+    fun normalize(text: String): String =
+        Normalizer.normalize(text.lowercase(Locale.ROOT), Normalizer.Form.NFD)
+            .replace(ACCENTS, "")
+            .replace(PUNCT, " ")
+            .trim()
 
     fun findMovie(id: Int): CatalogItem? = cacheMovies.firstOrNull { it.id == id }
 

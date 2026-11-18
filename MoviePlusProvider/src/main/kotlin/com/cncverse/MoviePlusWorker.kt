@@ -1,10 +1,13 @@
 package com.cncverse
 
 import android.util.Base64
+import com.lagradost.cloudstream3.amap
 import com.lagradost.cloudstream3.app
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
@@ -20,20 +23,14 @@ object MoviePlusWorker {
     private const val BASE = "https://api.appsxploit.dev"
     private const val FB_PROJECT = "dev-movieplus"
     private const val VERSION_CODE = 90354
+    private const val RESOLVE_CONCURRENCY = 4
     private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
     private val ANDROID_HEADERS = mapOf(
         "X-Android-Package" to "com.dvex.movp",
         "X-Android-Cert" to BuildConfig.MOVIEPLUS_ANDROID_CERT,
     )
 
-    private val lock = Mutex()
-    private var keyPair: KeyPair? = null
-    private var spkiB64 = ""
-    private var deviceId = UUID.randomUUID().toString()
-    private var sessionToken: String? = null
-    private var grants: Map<String, String> = emptyMap()
-    private var sessionAtMs = 0L
-    private const val sessionTtlMs = 600_000L
+    private val fbLock = Mutex()
     private var firebaseIdToken: String? = null
     private var idTokenAtMs = 0L
     private const val idTokenTtlMs = 720_000L
@@ -46,24 +43,20 @@ object MoviePlusWorker {
 
     data class EpisodeLink(val season: Int, val episode: Int, val quality: String, val envelope: String)
 
+    // One throwaway device identity per resolve: the backend rate-limits playback per device.
+    private class Session(val keyPair: KeyPair, val spkiB64: String, val deviceId: String) {
+        var sessionToken: String? = null
+        var grants: Map<String, String> = emptyMap()
+    }
+
     private fun sha256Hex(b: ByteArray): String =
         MessageDigest.getInstance("SHA-256").digest(b).joinToString("") { "%02x".format(it) }
 
     private fun b64(b: ByteArray): String = Base64.encodeToString(b, Base64.NO_WRAP)
 
-    private fun ensureKey() {
-        if (keyPair != null) return
-        val gen = KeyPairGenerator.getInstance("RSA")
-        gen.initialize(2048)
-        val kp = gen.generateKeyPair()
-        keyPair = kp
-        spkiB64 = b64(kp.public.encoded)
-        deviceId = UUID.randomUUID().toString()
-    }
-
-    private fun signB64(msg: String): String {
+    private fun signB64(session: Session, msg: String): String {
         val sig = Signature.getInstance("SHA256withRSA")
-        sig.initSign(keyPair!!.private)
+        sig.initSign(session.keyPair.private)
         sig.update(msg.toByteArray(Charsets.UTF_8))
         return b64(sig.sign())
     }
@@ -102,36 +95,44 @@ object MoviePlusWorker {
         return r.code to r.text
     }
 
-    private fun hybridHeaders(path: String, bodyBytes: ByteArray): Map<String, String> {
-        val token = sessionToken ?: ""
+    private fun hybridHeaders(session: Session, path: String, bodyBytes: ByteArray): Map<String, String> {
+        val token = session.sessionToken ?: ""
         val nonce = UUID.randomUUID().toString().replace("-", "")
         val canon = "MOVP-HYBRID-REQUEST-V1\nPOST\n$path\n${sha256Hex(bodyBytes)}\n$nonce\n" +
             sha256Hex(token.toByteArray(Charsets.UTF_8))
         return mapOf(
             "X-MOVP-Hybrid-Session" to token,
             "X-MOVP-Hybrid-Nonce" to nonce,
-            "X-MOVP-Hybrid-Signature" to signB64(canon),
+            "X-MOVP-Hybrid-Signature" to signB64(session, canon),
         )
     }
 
     private suspend fun postRetry(
+        session: Session?,
         path: String,
         bodyBytes: ByteArray,
         hybrid: Boolean,
         tries: Int = 6,
+        stopOn: Set<Int> = emptySet(),
     ): Pair<Int, String> {
         var last = -1 to ""
         repeat(tries) {
-            val headers = if (hybrid) hybridHeaders(path, bodyBytes) else emptyMap()
+            val headers = if (hybrid && session != null) hybridHeaders(session, path, bodyBytes) else emptyMap()
             last = post(path, bodyBytes, headers)
-            if (last.first == 200) return last
+            if (last.first == 200 || last.first in stopOn) return last
             delay(2500)
         }
         return last
     }
 
-    private suspend fun connect(): Boolean {
-        ensureKey()
+    private fun generateIdentity(): Session {
+        val gen = KeyPairGenerator.getInstance("RSA")
+        gen.initialize(2048)
+        val kp = gen.generateKeyPair()
+        return Session(kp, b64(kp.public.encoded), UUID.randomUUID().toString())
+    }
+
+    private suspend fun connect(session: Session): Boolean {
         repeat(8) {
             try {
                 val (cst, cb) = post(
@@ -146,14 +147,14 @@ object MoviePlusWorker {
                 val challenge = JSONObject(cb).getString("challenge")
                 val sBody = json(
                     "schemaVersion" to 1,
-                    "publicKeySpki" to spkiB64,
+                    "publicKeySpki" to session.spkiB64,
                     "challenge" to challenge,
-                    "deviceId" to deviceId,
-                    "signature" to signB64("MOVP-HYBRID-SESSION-V1\n$challenge\n$deviceId"),
+                    "deviceId" to session.deviceId,
+                    "signature" to signB64(session, "MOVP-HYBRID-SESSION-V1\n$challenge\n${session.deviceId}"),
                 ).toByteArray(Charsets.UTF_8)
                 val (sst, sb) = post("/v2/client/session", sBody, emptyMap())
                 if (sst == 200) {
-                    sessionToken = JSONObject(sb).getString("sessionToken")
+                    session.sessionToken = JSONObject(sb).getString("sessionToken")
                     return true
                 }
             } catch (_: Throwable) {
@@ -163,104 +164,105 @@ object MoviePlusWorker {
         return false
     }
 
-    private suspend fun bootstrap(): Boolean {
+    private suspend fun bootstrap(session: Session): Boolean {
         val body = json(
             "schemaVersion" to 1,
-            "deviceId" to deviceId,
+            "deviceId" to session.deviceId,
             "channel" to "prod",
             "settingsProfile" to 7,
         ).toByteArray(Charsets.UTF_8)
-        val (st, b) = postRetry("/v2/client/bootstrap", body, true)
+        val (st, b) = postRetry(session, "/v2/client/bootstrap", body, true)
         if (st != 200) return false
         val g = JSONObject(b).optJSONObject("admission")?.optJSONObject("grants") ?: return false
         val m = HashMap<String, String>()
         for (k in g.keys()) m[k] = g.getString(k)
-        grants = m
-        return grants.containsKey("catalog") && grants.containsKey("catalog-value")
+        session.grants = m
+        return session.grants.containsKey("catalog") && session.grants.containsKey("catalog-value")
     }
 
-    private suspend fun ensureSession(): Boolean {
-        if (sessionToken != null && grants.isNotEmpty() && System.currentTimeMillis() - sessionAtMs < sessionTtlMs) {
-            return true
-        }
-        if (!connect()) return false
-        if (!bootstrap()) return false
-        sessionAtMs = System.currentTimeMillis()
-        return true
+    private suspend fun newSession(): Session? {
+        val session = generateIdentity()
+        if (!connect(session)) return null
+        if (!bootstrap(session)) return null
+        return session
     }
 
-    private suspend fun playback(envelope: String): String? {
+    private suspend fun playback(session: Session, envelope: String): String? {
         val body = json(
             "schemaVersion" to 1,
-            "deviceId" to deviceId,
-            "grantId" to (grants["catalog-value"] ?: ""),
+            "deviceId" to session.deviceId,
+            "grantId" to (session.grants["catalog-value"] ?: ""),
             "token" to envelope,
             "issuedAtMs" to System.currentTimeMillis() - 1000L,
             "resolveProvider" to true,
         ).toByteArray(Charsets.UTF_8)
-        val (st, b) = postRetry("/v2/client/playback", body, true)
+        val (st, b) = postRetry(session, "/v2/client/playback", body, true, 3, setOf(503, 429))
         if (st != 200) return null
         val o = JSONObject(b)
         if (o.optString("status") != "resolved" || !o.optBoolean("ok", false)) return null
         return o.optString("value").takeIf { it.startsWith("http") }
     }
 
-    suspend fun resolveMovie(movieId: Int, fallbackEnvelopes: List<String> = emptyList()): List<ResolvedLink> =
-        lock.withLock {
-            try {
-                if (!ensureSession()) {
-                    sessionToken = null
-                    grants = emptyMap()
-                    if (!ensureSession()) return@withLock emptyList()
-                }
-                val body = json(
-                    "schemaVersion" to 1,
-                    "deviceId" to deviceId,
-                    "grantId" to (grants["catalog"] ?: ""),
-                    "movieId" to movieId,
-                ).toByteArray(Charsets.UTF_8)
-                val (st, b) = postRetry("/v2/client/movie-variants", body, true, 3)
-                val variants = if (st == 200) {
-                    JSONObject(b).optJSONObject("movieLinks")?.optJSONArray("variants")
-                        ?.let { arr -> (0 until arr.length()).map { arr.getString(it) } }
-                        ?: emptyList()
-                } else {
-                    emptyList()
-                }
-                val entries = if (variants.isEmpty() && fallbackEnvelopes.isNotEmpty()) fallbackEnvelopes else variants
-                val out = ArrayList<ResolvedLink>()
-                val seen = HashSet<String>()
-                for (entry in entries) {
-                    val parts = entry.split(",_,", limit = 3)
-                    if (parts.size != 3) continue
-                    val url = try {
-                        playback(parts[2].trim())
-                    } catch (_: Throwable) {
-                        null
-                    } ?: continue
-                    if (seen.add(url)) out.add(ResolvedLink(parts[0].trim(), parts[1].trim(), url))
-                }
-                out
-            } catch (_: Throwable) {
+    private suspend fun resolveFresh(envelope: String): String? {
+        val session = newSession() ?: return null
+        return try {
+            playback(session, envelope)
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    suspend fun resolveMovie(movieId: Int, fallbackEnvelopes: List<String> = emptyList()): List<ResolvedLink> = try {
+        val session = newSession()
+        if (session == null) {
+            emptyList()
+        } else {
+            val body = json(
+                "schemaVersion" to 1,
+                "deviceId" to session.deviceId,
+                "grantId" to (session.grants["catalog"] ?: ""),
+                "movieId" to movieId,
+            ).toByteArray(Charsets.UTF_8)
+            val (st, b) = postRetry(session, "/v2/client/movie-variants", body, true, 3)
+            val variants = if (st == 200) {
+                JSONObject(b).optJSONObject("movieLinks")?.optJSONArray("variants")
+                    ?.let { arr -> (0 until arr.length()).map { arr.getString(it) } }
+                    ?: emptyList()
+            } else {
                 emptyList()
             }
+            val entries = if (variants.isEmpty() && fallbackEnvelopes.isNotEmpty()) fallbackEnvelopes else variants
+            val byQuality = LinkedHashMap<String, List<String>>()
+            entries.mapNotNull { e -> e.split(",_,", limit = 3).takeIf { it.size == 3 } }
+                .forEach { parts -> byQuality.getOrPut(parts[0].trim()) { parts } }
+            val gate = Semaphore(RESOLVE_CONCURRENCY)
+            val resolved = byQuality.values.toList().amap { parts ->
+                gate.withPermit {
+                    resolveFresh(parts[2].trim())?.let { ResolvedLink(parts[0].trim(), parts[1].trim(), it) }
+                }
+            }.filterNotNull()
+            val seen = HashSet<String>()
+            resolved.filter { seen.add(it.url) }
         }
+    } catch (_: Throwable) {
+        emptyList()
+    }
 
-    private suspend fun ensureFirebaseToken(): String? {
-        firebaseIdToken?.let { if (System.currentTimeMillis() - idTokenAtMs < idTokenTtlMs) return it }
-        if (!ensureSession()) return null
+    private suspend fun ensureFirebaseToken(): String? = fbLock.withLock {
+        firebaseIdToken?.let { if (System.currentTimeMillis() - idTokenAtMs < idTokenTtlMs) return@withLock it }
+        val session = newSession() ?: return@withLock null
         val authBody = json(
             "schemaVersion" to 1,
-            "deviceId" to deviceId,
+            "deviceId" to session.deviceId,
             "action" to "guest",
             "payload" to "__PAYLOAD__",
         ).replace(
             "\"__PAYLOAD__\"",
-            json("deviceKey" to deviceId, "appVersion" to "17.3", "platform" to "android"),
+            json("deviceKey" to session.deviceId, "appVersion" to "17.3", "platform" to "android"),
         ).toByteArray(Charsets.UTF_8)
-        val (ast, ab) = postRetry("/v2/client/auth", authBody, true, 4)
-        if (ast != 200) return null
-        val customToken = JSONObject(ab).optString("token").takeIf { it.isNotBlank() } ?: return null
+        val (ast, ab) = postRetry(session, "/v2/client/auth", authBody, true, 4)
+        if (ast != 200) return@withLock null
+        val customToken = JSONObject(ab).optString("token").takeIf { it.isNotBlank() } ?: return@withLock null
         val signInBody = json("token" to customToken, "returnSecureToken" to true).toByteArray(Charsets.UTF_8)
         val resp = app.post(
             "https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${BuildConfig.MOVIEPLUS_FIREBASE_API_KEY}",
@@ -268,19 +270,19 @@ object MoviePlusWorker {
             requestBody = signInBody.toRequestBody(JSON_MEDIA),
             timeout = 25L,
         )
-        if (resp.code != 200) return null
+        if (resp.code != 200) return@withLock null
         firebaseIdToken = JSONObject(resp.text).optString("idToken").takeIf { it.isNotBlank() }
         idTokenAtMs = System.currentTimeMillis()
-        return firebaseIdToken
+        firebaseIdToken
     }
 
-    suspend fun episodeEnvelopes(seriesId: Int): List<EpisodeLink> = lock.withLock {
-        try {
-            val token = ensureFirebaseToken() ?: return@withLock emptyList()
+    suspend fun episodeEnvelopes(seriesId: Int): List<EpisodeLink> {
+        return try {
+            val token = ensureFirebaseToken() ?: return emptyList()
             val url = "https://firestore.googleapis.com/v1/projects/$FB_PROJECT/databases/(default)/documents/tv/$seriesId"
             val resp = app.get(url, headers = ANDROID_HEADERS + ("Authorization" to "Bearer $token"), timeout = 25L)
-            if (resp.code != 200) return@withLock emptyList()
-            val fields = JSONObject(resp.text).optJSONObject("fields") ?: return@withLock emptyList()
+            if (resp.code != 200) return emptyList()
+            val fields = JSONObject(resp.text).optJSONObject("fields") ?: return emptyList()
             val out = ArrayList<EpisodeLink>()
             for (key in fields.keys()) {
                 val season = seasonKeyRe.find(key)?.groupValues?.get(1)?.toIntOrNull() ?: continue
@@ -353,16 +355,40 @@ object MoviePlusWorker {
         return result
     }
 
-    suspend fun resolveEnvelope(envelope: String): String? = lock.withLock {
-        try {
-            if (!ensureSession()) {
-                sessionToken = null
-                grants = emptyMap()
-                if (!ensureSession()) return@withLock null
+    suspend fun currentCatalogUrls(): List<String> = try {
+        val session = newSession()
+        if (session == null) {
+            emptyList()
+        } else {
+            val body = json(
+                "schemaVersion" to 1,
+                "deviceId" to session.deviceId,
+                "grantId" to (session.grants["catalog"] ?: ""),
+                "collection" to "app",
+                "documentId" to "db",
+            ).toByteArray(Charsets.UTF_8)
+            val (st, b) = postRetry(session, "/v2/client/document", body, true, 4)
+            val urls = if (st == 200) {
+                JSONObject(b).optJSONObject("data")?.optJSONObject("config_gz")
+                    ?.optJSONObject("prod")?.optJSONObject("urls")
+            } else {
+                null
             }
-            playback(envelope)
-        } catch (_: Throwable) {
-            null
+            if (urls == null) {
+                emptyList()
+            } else {
+                listOf("github", "server1", "server2").mapNotNull { key ->
+                    urls.optString(key).takeIf { it.startsWith("http") }
+                }
+            }
         }
+    } catch (_: Throwable) {
+        emptyList()
+    }
+
+    suspend fun resolveEnvelope(envelope: String): String? = try {
+        resolveFresh(envelope)
+    } catch (_: Throwable) {
+        null
     }
 }

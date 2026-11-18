@@ -19,7 +19,7 @@ import java.util.Locale
 import java.util.TimeZone
 
 class DaddyLiveProvider : MainAPI() {
-    override var mainUrl = "https://thedaddy.pk"
+    override var mainUrl = "https://thedaddy.li"
     override var name = "DaddyLive"
     override var lang = "en"
     override val hasMainPage = true

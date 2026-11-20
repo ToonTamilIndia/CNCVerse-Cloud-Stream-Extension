@@ -149,6 +149,26 @@
         "name": "CineVoodProvider"
     },
     {
+        "iconUrl": "https://raw.githubusercontent.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/icons/ClownIPTVProvider.png",
+        "fileHash": "sha256-380965f8e4ff13811289972570f0df2c86743b76fece906f80205ce15e7f5144",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension",
+        "fileSize": 20520,
+        "status": 1,
+        "language": "en",
+        "authors": [
+            "ToonTamilIndia"
+        ],
+        "tvTypes": [
+            "Live"
+        ],
+        "version": 2,
+        "internalName": "ClownIPTVProvider",
+        "description": "Clown IPTV - 28k+ live TV channels from around the world (HLS)",
+        "url": "https://raw.githubusercontent.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/ClownIPTVProvider.cs3",
+        "name": "ClownIPTVProvider"
+    },
+    {
         "iconUrl": "https://github.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/CNC%20Verse/icon.png",
         "fileHash": "sha256-50d4a1fa72861972cd9696acb45f146f78bee65b9f2e25542248df2ecbb84351",
         "apiVersion": 1,
@@ -524,10 +544,10 @@
     },
     {
         "iconUrl": "https://raw.githubusercontent.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/master/MoviePlusProvider/icon.png",
-        "fileHash": "sha256-b30c6104b5c3ba61f3900b8bd0ec09b64468f30d128fe40a7f2f387afec9af71",
+        "fileHash": "sha256-a7517f0ebb2c2bec9359f96f606e1234fe670d88ca64902d85cdd4fddaf1399d",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension",
-        "fileSize": 65171,
+        "fileSize": 66554,
         "status": 1,
         "language": "mx",
         "authors": [
@@ -537,7 +557,7 @@
             "Movie",
             "TvSeries"
         ],
-        "version": 5,
+        "version": 6,
         "internalName": "MoviePlusProvider",
         "description": "Movie! Plus \u2014 Spanish/Latino movies & series (TMDB metadata, Yandex.Disk sources, no login)",
         "url": "https://raw.githubusercontent.com/ToonTamilIndia/CNCVerse-Cloud-Stream-Extension/builds/MoviePlusProvider.cs3",
